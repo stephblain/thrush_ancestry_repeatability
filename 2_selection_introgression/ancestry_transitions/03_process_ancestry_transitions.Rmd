@@ -1,0 +1,577 @@
+---
+title: "Ancestry Transitions - Adult Hybrids"
+author: "steph"
+date: "2024-06-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir="C:/Users/Steph/GitHub/thrush_hybrids/ancestry_tracts/")
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
+```{r data and libraries}
+
+library(tidyverse)
+library(ggpubr)
+library(patchwork)
+library(propagate)
+library(lme4)
+theme_set(theme_classic())
+
+tracts<-read_csv("C:/Users/Steph/GitHub_data/bgchm_clines/tracts_ThrushHybridsAdults.240222.csv")
+
+#actual LD-pruned AIMs states for autosomes
+aims<-read_table("C:/Users/Steph/GitHub_data/thrushHybrids.f50.240205.LD.states")
+#list of all autosomal AIMs
+aims2<-read_table("C:/Users/Steph/GitHub_data/hmm_aims_thrushHybrids",
+                  col_names=c("scaffold","position","ref","alt"))
+
+scaf_order_raw<-read.csv("C:/Users/Steph/Downloads/scaffold_order.csv")
+scaf_order<-scaf_order_raw%>%
+  mutate(scaffold=gsub("_","-",Sequence.Name),
+         chromosome=paste("chromosome",sprintf("%02d",as.numeric(Assigned.Molecule)),
+                          sep="_"))%>%
+  mutate(chromosome=if_else(Assigned.Molecule%in%c("Z","W"),
+                            paste("chromosome",Assigned.Molecule,sep="_"),chromosome))%>%
+  dplyr::select(scaffold,chromosome)
+
+meta_aims<-read.csv("C:/Users/Steph/GitHub_data/AIMs_metaData/AIMs_metadata_240227.csv")
+clines<-read.csv("C:/Users/Steph/GitHub_data/bgchm_clines/bgchm_clines_overlappingOutliers.csv")
+
+
+pop.cols<-c("#202D26","#49654A","#849D74","#ADB593")
+hybCol="#849D74"
+
+
+```
+
+
+```{r formatting}
+
+meta_aims<-meta_aims%>%filter(reference%in%tracts$reference)
+
+aims<-aims%>%rename(scaffold=CHROM)%>%left_join(scaf_order)%>%
+  mutate(ChromPos=paste(chromosome,POS,sep="_"))%>%
+  dplyr::select(-c(POS,REF,ALT,scaffold))%>%filter(!is.na(chromosome))%>%
+  pivot_longer(-c(ChromPos,chromosome),names_to="reference",values_to="genotype")
+
+
+aims2<-aims2%>%
+  left_join(scaf_order)%>%
+  mutate(ChromPos=paste(chromosome,sprintf("%010d",position),sep="_"))%>%
+  mutate(ChromPos100kb=paste(chromosome,sprintf("%010d",plyr::round_any(position,100000)),sep="_"))
+
+
+tracts<-tracts%>%mutate(scaffold=CHROM)%>%
+  left_join(scaf_order)%>%
+  mutate(ChromPos=paste(chromosome,sprintf("%010d",start),sep="_"))%>%
+  mutate(ChromPos100kb=paste(chromosome,sprintf("%010d",plyr::round_any(start,100000)),sep="_"))%>%
+  left_join(meta_aims%>%dplyr::select(reference,release_site))%>%
+  rename(population=release_site)%>%
+  filter(chromosome%in%c("chromosome_01","chromosome_02",
+                         "chromosome_03","chromosome_04",
+                         "chromosome_05","chromosome_06",
+                         "chromosome_07"))
+
+tractSummary100kb<-tracts%>%group_by(ChromPos100kb,chromosome,population)%>%
+  summarise(meanLength=mean(tractLength)/100000,
+            startCount=n(),
+            meanAncestry=mean(ancestry))%>%ungroup()%>%
+  left_join(aims2%>%group_by(ChromPos100kb)%>%summarise(aimsCount=n()))%>%
+  left_join(meta_aims%>%rename(population=release_site)%>%
+              group_by(population)%>%
+              summarise(sampleSize=n()))%>%
+  mutate(startsPerBird=startCount/sampleSize,
+         populationNum=as.numeric(as.factor(as.character(population))))%>%
+  mutate(population=factor(population,
+                           levels=c("Alaska","Pemberton","Hope","Washington")))%>%
+  filter(aimsCount<1600) #remove outlier window
+
+
+```
+
+Mean lengths and ancestries of tracts starting in 100kb windows
+
+```{r}
+
+ggplot(tractSummary100kb,
+       aes(x=ChromPos100kb,y=meanLength,colour=meanAncestry))+
+  geom_bar(stat='identity')+
+  scale_colour_gradient2(high="cadetblue4",low="goldenrod4",mid="grey60",
+                         name=element_blank(),midpoint=1)+
+  theme(axis.text.x=element_blank(),axis.ticks.x=element_blank())+
+  ylab("mean tract length")+xlab("")+
+  facet_grid(rows=vars(population),scales='free_y')
+
+```
+
+Histogram of ancestry starts per population
+
+```{r,fig.width=6,fig.height=3}
+
+tracts<-tracts%>%
+  mutate(population=factor(population,levels=c("Alaska","Pemberton","Hope","Washington")))
+
+gg1<-ggplot(tracts%>%mutate(chromosome=gsub("chromosome_","",chromosome)),
+       aes(x=start,fill=population))+
+  geom_histogram(binwidth=100000)+
+  theme_classic()+
+  scale_fill_manual(values=pop.cols,name="Population")+
+  theme(axis.text.x=element_blank(),axis.ticks.x=element_blank())+
+  ylab("Tract starts")+xlab("Genomic position")+
+  facet_grid(cols=vars(chromosome),scale="free",space="free")+
+  theme(strip.background = element_rect(fill="white"))
+ggsave("C:/Users/Steph/GitHub/thrush_hybrids/ancestry_tracts/figures/ancestryTracts.png",gg1,
+       width=8,height=2)
+
+```
+
+Number of transitions depends, non-linearly, on the number of windows
+
+```{r}
+
+ggplot(tractSummary100kb,aes(x=aimsCount,y=startsPerBird,colour=population))+
+  geom_point()+
+  scale_colour_manual(values=pop.cols)+
+  geom_smooth(se=F,method='gam')+
+  theme(panel.grid.major=element_line(colour = "grey"),
+        panel.grid.minor=element_line(colour = "grey"),
+        axis.text.x=element_text(angle=45))+ 
+  scale_x_continuous(breaks=seq(0,max(tractSummary100kb$aimsCount),100))+
+  xlab("Number of AIMs")+ylab("Ancestry transitions")
+
+```
+
+Fit asymptotic model for relationship between # AIMs and # transitions
+
+Some skew with higher fitted values, but not too bad
+
+```{r, fig.width=8,fig.height=3, eval=F,include=F}
+
+nlsOut<-data.frame()
+
+for(pop1 in levels(tractSummary100kb$population)){
+
+  df1<-tractSummary100kb%>%filter(population==pop1)%>%arrange(aimsCount)
+  
+  #fit model
+  nls1<-nls(startsPerBird ~ SSasympOrig(aimsCount, Asym, lrc), df1)
+  
+  #visualize model fit
+  gg1<-ggplot()+
+    geom_point(aes(x=fitted(nls1),y=resid(nls1)),pch=1)+
+    geom_hline(yintercept = 0,colour="maroon3",linetype=2,size=0.8)+
+    xlab("fitted values")+ylab("standardized residuals")+
+    ggtitle(pop1)
+  
+  #get simulated 95% confidence interval
+  ci1<-predictNLS(nls1,newdata=data.frame(aimsCount=df1$aimsCount),
+                  interval="confidence",alpha=0.01,nsim=10000)$summary
+  
+  out1<-df1%>%dplyr::select(population,ChromPos100kb,aimsCount,startsPerBird)%>%
+    mutate(nlsPredict=predict(nls1),
+           CIlwr=ci1$`Prop.0.5%`,CIupr=ci1$`Prop.99.5%`,
+           nlsFitted=as.vector(fitted(nls1)),
+           nlsResid=as.vector(resid(nls1)))
+  
+  gg2<-ggplot(out1,aes(x=aimsCount,y=startsPerBird))+
+    geom_point(pch=1)+
+    geom_line(aes(x=aimsCount,y=nlsPredict),colour="maroon3",size=1)+
+    geom_line(aes(x=aimsCount,y=CIlwr),colour="maroon3",linetype=2,size=1)+
+    geom_line(aes(x=aimsCount,y=CIupr),colour="maroon3",linetype=2,size=1)+
+    xlab("number of AIMs")+ylab("number of transitions")
+  
+  ggarrange(gg1,gg2,align='h')
+  
+  nlsOut<-rbind(out1,nlsOut)
+
+}
+
+write.csv(nlsOut,"C:/Users/Steph/GitHub_data/ancestry_tracts/ancestryTransitions.nlsCI.20240605.csv",row.names=F)
+
+```
+
+
+```{r}
+
+nlsOut<-read.csv("C:/Users/Steph/GitHub_data/ancestry_tracts/ancestryTransitions.nlsCI.20240605.csv")
+
+tractSummary100kb<-tractSummary100kb%>%
+  left_join(nlsOut%>%dplyr::select(population,ChromPos100kb,nlsPredict,CIlwr,CIupr,
+                                   nlsFitted,nlsResid))%>%
+  mutate(outlierLwr=if_else(startsPerBird<CIlwr,1,0))
+
+```
+
+Visualize model fits for each population
+
+```{r}
+
+gg1<-ggplot(tractSummary100kb,aes(x=nlsFitted,y=nlsResid))+
+  geom_point(pch=1,size=0.5)+
+  geom_hline(yintercept = 0,colour="maroon3",linetype=2,size=0.8)+
+  xlab("Fitted values")+ylab("Standardized residuals")+
+  facet_wrap(vars(population))
+
+
+gg2<-ggplot(tractSummary100kb,aes(x=aimsCount,y=startsPerBird))+
+  geom_point(pch=1,size=0.5)+
+  geom_line(aes(x=aimsCount,y=nlsPredict),colour="maroon3",size=1)+
+  geom_line(aes(x=aimsCount,y=CIlwr),colour="maroon3",linetype=2,size=1)+
+  geom_line(aes(x=aimsCount,y=CIupr),colour="maroon3",linetype=2,size=1)+
+  xlab("Number of AIMs")+ylab("Number of transitions")+
+  facet_wrap(vars(population))
+
+gg1
+gg2
+
+ggsave("C:/Users/Steph/GitHub/thrush_hybrids/ancestry_tracts/figures/model_fit.png",gg2,
+      width=6,height=4,units="in")
+
+
+
+```
+
+## Compare observed and expected overlap between populations
+
+
+```{r}
+
+tractSummary100kb%>%filter(outlierLwr==1)%>%pull(ChromPos100kb)%>%unique()%>%length()
+nLoci=tractSummary100kb%>%pull(ChromPos100kb)%>%unique()%>%length()
+popCombos<-t(combn(sort(unique(tractSummary100kb$population)),2))
+outOverlap<-data.frame()
+
+for(i in 1:nrow(popCombos)){
+  pop1<-popCombos[i,1]
+  pop2<-popCombos[i,2]
+  
+  out1<-tractSummary100kb%>%filter(outlierLwr&population==pop1)%>%pull(ChromPos100kb)
+  out2<-tractSummary100kb%>%filter(outlierLwr&population==pop2)%>%pull(ChromPos100kb)
+  
+  overlap1<-sum(out1%in%out2)
+  expected1<-length(out1)*length(out2)/nLoci
+  
+  outOverlap<-rbind(outOverlap,
+                    data.frame(populations=paste(pop1,pop2,sep=" x "),
+                               sharedOutliers=overlap1,expectedSharedOutliers=expected1))
+  
+}
+
+popCombos3<-t(combn(sort(unique(tractSummary100kb$population)),3))
+
+for(i in 1:nrow(popCombos3)){
+  pop1<-popCombos3[i,1]
+  pop2<-popCombos3[i,2]
+  pop3<-popCombos3[i,3]
+  
+  out1<-tractSummary100kb%>%filter(outlierLwr&population==pop1)%>%pull(ChromPos100kb)
+  out2<-tractSummary100kb%>%filter(outlierLwr&population==pop2)%>%pull(ChromPos100kb)
+  out3<-tractSummary100kb%>%filter(outlierLwr&population==pop3)%>%pull(ChromPos100kb)
+  
+  overlap1<-length(intersect(intersect(out1,out2),out3))
+  #three way overlap: expected for 2 pops/nLoci * outliers in third pop
+  #(5*4*3)/(2^2)==(5*4/2)*3/2
+  expected1<-(length(out1)*length(out2)/nLoci)*length(out3)/nLoci
+  
+  outOverlap<-rbind(outOverlap,
+                    data.frame(populations=paste(pop1,pop2,pop3,sep=" x "),
+                               sharedOutliers=overlap1,expectedSharedOutliers=expected1))
+}
+
+pop1="Alaska"; pop2="Pemberton"; pop3="Hope"; pop4="Washington"
+out1<-tractSummary100kb%>%filter(outlierLwr&population==pop1)%>%pull(ChromPos100kb)
+out2<-tractSummary100kb%>%filter(outlierLwr&population==pop2)%>%pull(ChromPos100kb)
+out3<-tractSummary100kb%>%filter(outlierLwr&population==pop3)%>%pull(ChromPos100kb)
+out4<-tractSummary100kb%>%filter(outlierLwr&population==pop4)%>%pull(ChromPos100kb)
+
+overlap1<-length(intersect(intersect(intersect(out1,out2),out3),out4))
+#three way overlap: expected for 2 pops/nLoci * outliers in third pop
+expected1<-(length(out1)/nLoci)*(length(out2)/nLoci)*(length(out3)/nLoci)*length(out4)
+
+outOverlap<-rbind(outOverlap,data.frame(populations=paste(pop1,pop2,pop3,pop4,sep=" x "),
+                                        sharedOutliers=overlap1,expectedSharedOutliers=expected1))
+
+outOverlap<-outOverlap%>%
+  mutate(ratio=round(sharedOutliers/expectedSharedOutliers,2))%>%
+  mutate(expectedSharedOutliers=round(expectedSharedOutliers,2))%>%
+  rename("observered overlap"="sharedOutliers",
+         "expected overlap"="expectedSharedOutliers")
+
+outOverlap
+
+
+# write.csv(outOverlap,
+#           file="C:/Users/Steph/GitHub/thrush_hybrids/ancestry_tracts/outlier_overlap.csv",
+#           row.names=F)
+
+```
+
+```{r}
+
+clineOutlierSummary<-read.csv(file="C:/Users/Steph/GitHub/thrush_hybrids/genomic_clines/clines_outlier_summary.csv")
+tractOutlierSummary<-tractSummary100kb%>%filter(outlierLwr>0)%>%
+  group_by(ChromPos100kb)%>%
+  summarise(tractOutlierCount=n())%>%
+  rename(ChromPos=ChromPos100kb)
+
+tractOutlierSummary%>%filter(tractOutlierCount==4)%>%
+  mutate(chromosome=substr(ChromPos,1,13))%>%group_by(chromosome)%>%
+  summarise(n())
+
+#write.csv(tractOutlierSummary,file="C:/Users/Steph/GitHub/thrush_hybrids/ancestry_tracts/transitions_outlier_summary.csv")
+```
+
+```{r, fig.width=9,fig.height=2}
+
+transitionOutliers<-tractSummary100kb%>%filter(outlierLwr==1)%>%
+  group_by(ChromPos100kb)%>%
+  summarise(countOutlier=n())%>%
+  filter(countOutlier==4)%>%
+  mutate(yvar=0)
+
+ggplot(tractSummary100kb,
+       aes(x=ChromPos100kb,y=startCount,fill=population))+
+  geom_bar(stat='identity')+
+  geom_point(data=transitionOutliers,
+    mapping=aes(x=ChromPos100kb,y=yvar),
+    fill="grey30",colour="grey30",pch="|")+
+  scale_fill_manual(values=pop.cols,name="Population")+
+  theme(axis.text.x=element_blank(),axis.ticks.x=element_blank())+
+  ylab("Tract starts")+xlab("Genomic position")+
+  theme(strip.background = element_rect(fill="white"))
+  
+
+
+```
+
+## Look at overlap with interesting loci
+
+### SNPs associated with migratory phenotypes
+
+```{r}
+
+
+gwasSNPs1<-read.csv("C:/Users/Steph/GitHub_data/ancestry_tracts/metaUSAT_SNPs_steph.csv")
+gwasSNPs2<-read.csv("C:/Users/Steph/GitHub_data/ancestry_tracts/all_traits_SNPs_plog6.csv")
+gwasSNPs<-rbind(gwasSNPs1,gwasSNPs2); rm(gwasSNPs1,gwasSNPs2)
+
+gwasSNPs<-gwasSNPs%>%
+  mutate(scaffold=gsub("_","-",chr))%>%
+  left_join(scaf_order)%>%
+  mutate(pos=as.numeric(as.character(pos)))%>%
+  mutate(ChromPos=paste(chromosome,sprintf("%010d",pos),sep="_"))%>%
+  mutate(ChromPos100kb=paste(chromosome,sprintf("%010d",plyr::round_any(pos,100000)),sep="_"))%>%
+  dplyr::select(chromosome,ChromPos,ChromPos100kb,phenotype)%>%
+  filter(!is.na(chromosome))
+
+gwasTransitionsOutliers<-gwasSNPs%>%filter(ChromPos100kb%in%transitionOutliers$ChromPos100kb)
+gwasTransitionsOutliers%>%mutate(Chrom=substr(ChromPos100kb,1,13))%>%
+  group_by(Chrom,phenotype)%>%
+  summarise(count=n())%>%
+  arrange(phenotype)
+nrow(gwasTransitionsOutliers)
+
+tractLoci4pops<-tractSummary100kb%>%group_by(ChromPos100kb)%>%
+  summarise(count=n())%>%filter(count==4)
+
+nrow(gwasSNPs%>%filter(ChromPos100kb%in%tractLoci4pops$ChromPos100kb))*
+  nrow(transitionOutliers)/nrow(tractLoci4pops)
+
+```
+
+### Misexpressed genes
+
+```{r}
+
+misexpress<-rbind(readxl::read_excel("C:/Users/Steph/GitHub_data/ancestry_tracts/Misexpression_tables.xlsx",
+                                     sheet=2)%>%dplyr::select(-11)%>%mutate(Brain="CNH1"),
+                  readxl::read_excel("C:/Users/Steph/GitHub_data/ancestry_tracts/Misexpression_tables.xlsx",
+                                     sheet=3)%>%dplyr::select(-11)%>%mutate(Brain="CNM1"),
+                  readxl::read_excel("C:/Users/Steph/GitHub_data/ancestry_tracts/Misexpression_tables.xlsx",
+                                     sheet=4)%>%dplyr::select(-11)%>%mutate(Brain="HC1"),
+                  readxl::read_excel("C:/Users/Steph/GitHub_data/ancestry_tracts/Misexpression_tables.xlsx",
+                                     sheet=5)%>%dplyr::select(-11)%>%mutate(Brain="HC2"),
+                  readxl::read_excel("C:/Users/Steph/GitHub_data/ancestry_tracts/Misexpression_tables.xlsx",
+                                     sheet=6)%>%dplyr::select(-11)%>%mutate(Brain="HT1"))
+
+
+misexpress<-misexpress%>%filter(Spring.Misexpressed==1|Winter.Misexpressed==1)%>%
+  rename(RefSeq.Accn=Chr)%>%
+  left_join(scaf_order_raw%>%dplyr::select(Sequence.Name,RefSeq.Accn))%>%
+  rename(scaffold=Sequence.Name)%>%
+  dplyr::select(scaffold,Str,End,Gene,Spring.Misexpressed,Winter.Misexpressed)%>%
+  filter(!is.na(scaffold))%>%
+  pivot_longer(cols=c(Spring.Misexpressed,Winter.Misexpressed),names_to="Season")%>%
+  mutate(Season=gsub(".Misexpressed","",Season))%>%
+  filter(value==1)%>%dplyr::select(-value)%>%
+  distinct()%>%
+  mutate(scaffold=gsub("_","-",scaffold))%>%left_join(scaf_order)%>%
+  mutate(ChromPos100kbStr=paste(chromosome,sprintf("%010d",plyr::round_any(Str,100000)),sep="_"))%>%
+  mutate(ChromPos100kbEnd=paste(chromosome,sprintf("%010d",plyr::round_any(End,100000)),sep="_"))
+
+
+misexpressTransitionOutliers<-misexpress%>%
+  filter(ChromPos100kbStr%in%transitionOutliers$ChromPos100kb|
+           ChromPos100kbEnd%in%transitionOutliers$ChromPos100kb)
+
+#unique genes
+misexpressTransitionOutliers%>%dplyr::select(chromosome,Gene)%>%distinct()
+misexpressTransitionOutliers%>%dplyr::select(ChromPos100kbStr)%>%distinct()
+
+misexpressTransitionOutliers%>%
+  group_by(chromosome)%>%summarise(n())
+
+misexpress%>%filter(ChromPos100kbStr%in%tractLoci4pops$ChromPos100kb)%>%
+  pull(ChromPos100kbStr)%>%unique()%>%length()*
+  nrow(transitionOutliers)/nrow(tractLoci4pops)
+
+
+```
+```{r,fig.width=8,fig.height=3}
+
+tractOutlierGenesSummary<-
+  rbind(misexpress%>%dplyr::rename(ChromPos=ChromPos100kbStr)%>%
+    left_join(tractOutlierSummary)%>%
+    filter(!is.na(tractOutlierCount))%>%
+    mutate(ld_dataset="misexpress")%>%
+    dplyr::select(chromosome,ChromPos,tractOutlierCount,ld_dataset)%>%
+      distinct(),
+  
+  gwasSNPs%>%dplyr::select(-ChromPos)%>%
+    dplyr::rename(ChromPos=ChromPos100kb)%>%
+    left_join(tractOutlierSummary)%>%
+    filter(!is.na(tractOutlierCount))%>%
+    mutate(ld_dataset="gwas")%>%
+    dplyr::select(chromosome,ChromPos,tractOutlierCount,ld_dataset))%>%
+  mutate(chromosome=gsub("chromosome_","",chromosome))
+
+figS3<-ggplot(tractOutlierGenesSummary,
+       aes(x=chromosome))+
+  geom_bar(aes(fill=as.character(tractOutlierCount)))+
+  scale_fill_manual(values=c("grey70","lightpink2","lightpink3","lightpink4"),
+                        name=element_blank())+
+  facet_wrap(vars(ld_dataset))
+
+ggsave(figS3,filename="C:/Users/Steph/GitHub/thrush_hybrids/ancestry_tracts/figures/FigS3.png",width=8,height=3)
+
+```
+
+
+```{r}
+
+intersect(misexpressTransitionOutliers$ChromPos100kbStr,gwasTransitionsOutliers$ChromPos100kb)
+
+```
+
+## Relationship to genome structure
+
+
+```{r}
+
+rho<-read.csv("C:/Users/Steph/GitHub/thrush_hybrids/genomeArchitecture.100kb.20240808.csv")
+rho<-rho%>%
+  mutate(ChromPos100kb=paste(chromosome,sprintf("%010d",plyr::round_any(startpos,100000)),sep="_"))%>%
+  mutate(chromosomeType=case_when(substr(chromosome,1,12)=="chromosome_Z"~"sex",
+                                      scaffoldLength_Mb<20~"micro",
+                                      scaffoldLength_Mb>40~"macro"))
+tractSummary100kb<-tractSummary100kb%>%
+  left_join(rho%>%
+              dplyr::select(ChromPos100kb,mean_cMMb,gene_density_100kb,scaffoldLength_Mb,Fst,chromosomeType,logRatioMu))
+
+
+# write.csv(tractSummary100kb,
+#           file="C:/Users/Steph/GitHub/thrush_hybrids/genomicFeatures/tractsGenomeArchitecture.csv",
+#           row.names=F)
+
+```
+
+
+```{r}
+
+
+ggplot(tractSummary100kb,
+       aes(x=log(mean_cMMb),y=aimsCount,colour=population,fill=population))+
+  geom_point(size=0.3)+
+  geom_smooth(method="lm")+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  xlab("recombination (log scale)")
+
+```
+
+```{r,fig.width=10,fig.height=2.5}
+
+tractSummary100kb$population<-factor(tractSummary100kb$population,levels=c("Alaska","Pemberton","Hope","Washington"))
+
+p1<-ggplot(tractSummary100kb%>%filter(aimsCount>50&mean_cMMb<3),
+       aes(x=log(mean_cMMb),y=startsPerBird,colour=population,fill=population))+
+  geom_point(size=0.3)+
+  geom_smooth(method="lm")+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  xlab("Recombination (log scale)")+
+  ylab("Ancestry transitions")
+
+
+p2<-ggplot(tractSummary100kb%>%filter(aimsCount>50),
+       aes(x=Fst,y=startsPerBird,colour=population,fill=population))+
+  geom_point(size=0.3)+
+  geom_smooth(method="lm")+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  xlab("Fst")+
+  ylab("Ancestry transitions")
+
+
+p3<-ggplot(tractSummary100kb%>%filter(aimsCount>50),
+       aes(x=gene_density_100kb,y=startsPerBird,colour=population,fill=population))+
+  geom_point(size=0.3)+
+  geom_smooth(method="lm")+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  xlab("Genes/100kb")+
+  ylab("Ancestry transitions")
+
+#leave out scaffold length - macrochromosomes only
+
+gg1<-ggarrange(p1,p2,p3,common.legend=T,nrow=1,legend="right",labels=LETTERS)
+gg1
+
+ggsave("C:/Users/Steph/GitHub/thrush_hybrids/ancestry_tracts/figures/tracts_genomeStructure.png",gg1,
+       width=10,height=2.5,units="in",bg='white')
+
+```
+
+```{r}
+
+library(lme4)
+library(car)
+
+lmm1<-lmer(startsPerBird~gene_density_100kb+(1|population),data=tractSummary100kb%>%filter(aimsCount>50))
+summary(lmm1)
+confint(lmm1)
+Anova(lmm1)
+
+
+lmm2<-lmer(startsPerBird~log(mean_cMMb)+(1|population),data=tractSummary100kb%>%filter(aimsCount>50))
+summary(lmm2)
+confint(lmm2)
+Anova(lmm2)
+
+
+lmm3<-lmer(startsPerBird~Fst+(1|population),data=tractSummary100kb%>%filter(aimsCount>50))
+summary(lmm3)
+confint(lmm3)
+Anova(lmm3)
+
+lmm4<-lmer(startsPerBird~abs(logRatioMu)+(1|population),data=tractSummary100kb%>%filter(aimsCount>50))
+summary(lmm4)
+confint(lmm4)
+Anova(lmm4)
+
+
+
+```

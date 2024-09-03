@@ -1,0 +1,888 @@
+---
+title: "bgchm output"
+author: "steph"
+date: "2024-04-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_knit$set(root.dir="C:/Users/Steph/GitHub_data/bgchm_clines/")
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
+```{r}
+library(tidyverse); library(patchwork); library(lme4); library(ggpubr)
+theme_set(theme_classic())
+
+#populationList=c("Alaska","Pemberton","Hope","Washington")
+populationList=c("Pemberton","Hope","Washington","Alaska")
+
+clines<-data.frame()
+for(pop1 in populationList){
+  clines1<-read_table(paste("bgchm_clines_out_withZ",pop1,"tsv",sep="."))
+  clines<-rbind(clines,clines1)}
+
+scaf_order<-read.csv("C:/Users/Steph/Downloads/scaffold_order.csv")%>%
+  mutate(scaffold=gsub("_","-",Sequence.Name),
+         chromosome=paste("chromosome",sprintf("%02d",as.numeric(Assigned.Molecule)),
+                          sep="_"))%>%
+  mutate(chromosome=if_else(Assigned.Molecule%in%c("Z","W"),
+                            paste("chromosome",Assigned.Molecule,sep="_"),chromosome))%>%
+  dplyr::select(scaffold,chromosome)
+
+clines<-clines%>%mutate(scaffold=str_split_i(locus,"_",1),
+                position=sprintf("%010d",as.numeric(str_split_i(locus,"_",2))))%>%
+  left_join(scaf_order)%>%
+  mutate(ChromPos=paste(chromosome,position))%>%
+  mutate(outlier=case_when(param=="centre"&CIlwr>0.5~"y",
+                                  param=="centre"&CIupr<0.5~"y",
+                                  param=="gradient"&CIlwr>1~"y",T~"n"))
+
+pop.cols<-c("#202D26","#49654A","#849D74","#ADB593")
+hybCol="#849D74"
+
+```
+
+### cline parameters across populations
+
+Cline gradient = rate of transition from one species to the other
+
+If gradient > 1, that locus is under selection
+
+Note chromosomes 1 and 5
+
+```{r}
+
+ggplot(clines%>%filter(param=="gradient"),
+       aes(x=ChromPos,y=median,colour=chromosome,shape=outlier))+
+  geom_hline(yintercept=1,colour="thistle3",linewidth=1)+
+  geom_point()+
+  scale_colour_manual(values=rep(c("grey10","grey60"),13),guide="none")+
+  scale_shape_manual(values=c(1,19))+
+  theme(axis.text.x=element_blank(),axis.ticks.x=element_blank())+
+  facet_grid(rows=vars(population))+
+  ylab("median cline gradient")+xlab("Genomic position")
+
+
+```
+
+Cline centre = whether cline is shifted towards one species or the other
+
+If centre > 0.5, shifted towards inland and if centre < 0.5, shifted towards coastal
+
+```{r}
+
+ggplot(clines%>%filter(param=="centre"),
+       aes(x=ChromPos,y=median,colour=chromosome,shape=outlier))+
+  geom_hline(yintercept=0.5,colour="thistle3",linewidth=1)+
+  geom_point()+
+  scale_colour_manual(values=rep(c("grey10","grey60"),13),guide="none")+
+  scale_shape_manual(values=c(1,19))+
+  theme(axis.text.x=element_blank(),axis.ticks.x=element_blank())+
+  facet_grid(rows=vars(population),scales="free")+
+  ylab("median cline centre (alpha)")+xlab("Genomic position")
+
+clines%>%
+  group_by(param,population)%>%
+  summarise(mean_parameter=mean(median))
+
+```
+
+```{r}
+
+
+clinesSummary<-clines%>%dplyr::select(ChromPos,param,chromosome)%>%distinct()%>%
+  
+  left_join(clines%>%
+              filter(outlier=="y")%>%
+              group_by(ChromPos,param)%>%
+              summarise(countOutlier=n()))%>%
+  mutate(countOutlier=if_else(is.na(countOutlier),0,countOutlier))%>%
+  
+  left_join(clines%>%
+              group_by(ChromPos,param)%>%
+              summarise(meanVal=mean(median)))%>%
+  
+  mutate(countOutlierDir=if_else(param=="centre"&meanVal<0.5,countOutlier*(-1),countOutlier))
+
+```
+### overlap in outliers
+
+Outliers based on confidence limits from bgchm
+
+First make chromosome plot for aligning under genome plots
+
+```{r,fig.width=6,fig.height=0.6}
+#add a nonsense x variable
+clinesSummary<-clinesSummary%>%mutate(x_group="x")
+
+#make plot where x axis is the same variable as the x axis in genome plots
+#y axis is some dummy variable
+#fill is chromosome
+chromPlot<-ggplot(clinesSummary%>%filter(param=="gradient"),
+       aes(x=ChromPos,y=x_group,fill=chromosome))+
+  geom_tile()+
+  scale_fill_manual(values=rep(c("grey30","grey70"),30))+
+  xlab("Chromosome")+
+  theme(axis.text.x=element_blank(),axis.ticks=element_blank(),
+        axis.text.y=element_blank(),
+        axis.line=element_blank(),
+        legend.position = "none")+ylab("")+
+  geom_hline(yintercept=c(1.5,2.5,3.5),colour="white",size=3)
+
+chromPlot
+
+```
+
+```{r}
+
+clinesSummary%>%filter(param=="gradient"&countOutlier>1)%>%nrow()
+
+clinesSummary%>%filter(param=="gradient"&countOutlier>1)%>%
+  mutate(chrOutlier=as.character(countOutlier))%>%
+  group_by(chrOutlier,chromosome)%>%
+  summarise(count=n())
+
+
+# write.csv(clinesSummary%>%filter(param=="gradient"&countOutlier>1)%>%dplyr::select(-x_group,-countOutlierDir),
+#           "C:/Users/Steph/GitHub_data/bgchm_clines/bgchm_clines_overlappingOutliers.csv",
+#           row.names=F)
+
+```
+
+
+```{r,fig.width=8,fig.height=3}
+
+gradientPlot<-ggplot(clinesSummary%>%filter(param=="gradient")%>%arrange(countOutlier),
+       aes(x=ChromPos,y=meanVal,colour=countOutlier,size=countOutlier))+
+  geom_hline(yintercept=1,lty=2)+
+  scale_colour_gradientn(colors=c("grey70","lightpink3","lightpink4"),
+                        name=element_blank())+
+  scale_size_continuous(range=c(0.8,3),name=element_blank(),guide="none")+
+  geom_point(shape=19,alpha=0.85)+theme_classic()+xlab("")+ylab("cline gradient")+
+  theme(axis.text.x=element_blank(),axis.ticks.x=element_blank(),
+        axis.line=element_blank())
+
+#gradientPlot/chromPlot+plot_layout(heights = c(12, 1))
+
+```
+
+```{r,fig.width=8,fig.height=6}
+
+#figure out max point size for shared overlap of 2
+((3-0.8)/4)*2+0.8
+
+centrePlot<-ggplot(clinesSummary%>%filter(param=="centre")%>%arrange(countOutlier),
+       aes(x=ChromPos,y=meanVal,colour=countOutlierDir,size=countOutlier))+
+  geom_hline(yintercept=0.5,lty=2)+
+  scale_colour_gradientn(colors=c("cadetblue4","cadetblue3",
+                                 "grey70","goldenrod3","goldenrod4"),
+                        name=element_blank())+
+  scale_size_continuous(range=c(0.8,2),name=element_blank(),guide="none")+
+  geom_point(shape=19,alpha=0.85)+theme_classic()+xlab("")+ylab("cline centre")+
+  theme(axis.text.x=element_blank(),axis.ticks.x=element_blank(),
+        axis.line=element_blank())
+
+
+#use patchwork to align three plots vertically, specifying the relative heights
+pClines<-gradientPlot/centrePlot/chromPlot+plot_layout(heights = c(12,12,1))
+pClines
+
+```
+```{r}
+nLoci<-nrow(clines)/8
+
+popCombos<-t(combn(sort(unique(clines$population)),2))
+outOverlap<-data.frame()
+
+for(i in 1:nrow(popCombos)){
+  pop1<-popCombos[i,1]
+  pop2<-popCombos[i,2]
+  
+  out1<-clines%>%filter(param=="gradient"&population==pop1&outlier=="y")%>%pull(ChromPos)
+  out2<-clines%>%filter(param=="gradient"&population==pop2&outlier=="y")%>%pull(ChromPos)
+
+  overlap1<-sum(out1%in%out2)
+  expected1<-length(out1)*length(out2)/nLoci
+
+  outOverlap<-rbind(outOverlap,data.frame(populations=paste(pop1,pop2,sep=" x "),
+           sharedOutliers=overlap1,expectedSharedOutliers=expected1))
+
+}
+
+popCombos3<-t(combn(sort(unique(clines$population)),3))
+
+for(i in 1:nrow(popCombos3)){
+  pop1<-popCombos3[i,1]
+  pop2<-popCombos3[i,2]
+  pop3<-popCombos3[i,3]
+  
+  out1<-clines%>%filter(param=="gradient"&population==pop1&outlier=="y")%>%pull(ChromPos)
+  out2<-clines%>%filter(param=="gradient"&population==pop2&outlier=="y")%>%pull(ChromPos)
+  out3<-clines%>%filter(param=="gradient"&population==pop3&outlier=="y")%>%pull(ChromPos)
+  
+  overlap1<-length(intersect(intersect(out1,out2),out3))
+  #three way overlap: expected for 2 pops/nLoci * outliers in third pop
+  expected1<-(length(out1)*length(out2)*length(out3))/nLoci^2
+
+  outOverlap<-rbind(outOverlap,data.frame(populations=paste(pop1,pop2,pop3,sep=" x "),
+           sharedOutliers=overlap1,expectedSharedOutliers=expected1))
+
+}
+
+pop1="Alaska"; pop2="Pemberton"; pop3="Hope"; pop4="Washington"
+out1<-clines%>%filter(param=="gradient"&population==pop1&outlier=="y")%>%pull(ChromPos)
+out2<-clines%>%filter(param=="gradient"&population==pop2&outlier=="y")%>%pull(ChromPos)
+out3<-clines%>%filter(param=="gradient"&population==pop3&outlier=="y")%>%pull(ChromPos)
+out4<-clines%>%filter(param=="gradient"&population==pop4&outlier=="y")%>%pull(ChromPos)
+  
+overlap1<-length(intersect(intersect(intersect(out1,out2),out3),out4))
+#three way overlap: expected for 2 pops/nLoci * outliers in third pop
+expected1<-(length(out1)/nLoci)*(length(out2)/nLoci)*(length(out3)/nLoci)*length(out4)
+
+outOverlap<-rbind(outOverlap,data.frame(populations=paste(pop1,pop2,pop3,pop4,sep=" x "),
+         sharedOutliers=overlap1,expectedSharedOutliers=expected1))
+
+outOverlap<-outOverlap%>%
+  mutate(ratio=round(sharedOutliers/expectedSharedOutliers,2))%>%
+  mutate(expectedSharedOutliers=round(expectedSharedOutliers,2))%>%
+  rename("observered overlap"="sharedOutliers",
+         "expected overlap"="expectedSharedOutliers")
+
+outOverlap
+
+# write.csv(outOverlap,
+#           file="C:/Users/Steph/GitHub/thrush_hybrids/genomic_clines/outlier_overlap.csv",
+#           row.names=F)
+
+```
+
+
+```{r}
+nLoci<-nrow(clines)/8
+
+clines%>%filter(param=="centre"&outlier=="y")%>%
+  mutate(centreDirection=if_else(median>0.5,"inland","coastal"))%>%
+  group_by(population,centreDirection)%>%
+  summarise(count=n())
+
+
+
+pop1="Hope"
+pop2="Pemberton"
+
+out1<-clines%>%filter(param=="centre"&population==pop1&outlier=="y")%>%pull(ChromPos)
+out2<-clines%>%filter(param=="centre"&population==pop2&outlier=="y")%>%pull(ChromPos)
+
+overlap1<-sum(out1%in%out2)
+expected1<-length(out1)*length(out2)/nLoci
+
+table(substr(out1[out1%in%out2],1,13))
+
+print(paste("observed:",overlap1))
+print(paste("expected:",round(expected1,2)))
+
+```
+
+```{r}
+
+pop1<-unique(clines$population)[1]
+t1<-t.test(clines%>%filter(param=="gradient"&population==pop1)%>%pull(median),
+       mu=1)
+data.frame(population=pop1,tStat=t1$statistic,
+           df=t1$parameter,pVal=t1$p.value)
+t.test(clines%>%filter(param=="centre"&population==pop1)%>%pull(median),
+       mu=0.5)
+
+lmm1<-lmer(median~1+(1|population),data=clines%>%filter(param=="gradient"))
+summary(lmm1)
+confint(lmm1)
+
+
+lmm2<-lmer(median~1+(1|population),data=clines%>%filter(param=="centre"))
+summary(lmm2)
+confint(lmm2)
+```
+#get a list of outlier regions in 1 or more populations
+
+```{r}
+
+outlierSummary<-clinesSummary%>%
+  mutate(newCol=paste(param,countOutlierDir,sep="_"))%>%
+  dplyr::select(ChromPos,param,countOutlierDir)%>%
+  pivot_wider(names_from="param",values_from="countOutlierDir")%>%
+  filter(!(centre==0&gradient==0))
+# write.csv(outlierSummary,
+#           file="C:/Users/Steph/GitHub/thrush_hybrids/genomic_clines/clines_outlier_summary.csv")
+
+outlierSummary%>%filter(abs(centre)>1|gradient>1)%>%
+  arrange(ChromPos)
+
+```
+
+```{r,fig.width=4,fig.height=6}
+
+
+misexpressGenes<-read_table("C:/Users/Steph/GitHub_data/bgchm_clines/thrushHybrids.f50.240619.aims_misexpressGenesLD.tsv")
+gwasSNPs<-read_table("C:/Users/Steph/GitHub_data/bgchm_clines/thrushHybrids.f50.240619.aims_gwasSNPsLD.tsv")
+gwasSNPs<-gwasSNPs%>%distinct()
+table(gwasSNPs$gwasSet)
+misexpressGenes<-misexpressGenes%>%distinct()
+
+
+misexpressGenes<-misexpressGenes%>%rename(scaffold=chr,position=focalPos)%>%
+  mutate(scaffold=gsub("_","-",scaffold),
+         position=sprintf("%010d",position))%>%
+  left_join(scaf_order)%>%
+  mutate(ChromPos=paste(chromosome,position))
+
+gwasSNPs<-gwasSNPs%>%rename(scaffold=chr,position=focalPos)%>%
+  mutate(scaffold=gsub("_","-",scaffold),
+         position=sprintf("%010d",position))%>%
+  left_join(scaf_order)%>%
+  mutate(ChromPos=paste(chromosome,position))
+
+
+clines<-clines%>%
+  mutate(misexpress=if_else(ChromPos%in%misexpressGenes$ChromPos,"misexpressed","notMisexpressed"))%>%
+  mutate(gwas=if_else(ChromPos%in%gwasSNPs$ChromPos,"phenotypeAssociated","notPhenotypeAssociated"))
+clinesSummary<-clinesSummary%>%
+  mutate(misexpress=if_else(ChromPos%in%misexpressGenes$ChromPos,"misexpressed","not misexpressed"))%>%
+  mutate(gwas=if_else(ChromPos%in%gwasSNPs$ChromPos,"aphenotype-\nassociated","bnot phenotype-\nassociated"))
+
+library(lme4)
+library(lmerTest)
+library(car)
+lm1<-lmer(median~misexpress+(1|population),clines%>%filter(param=="gradient"))
+Anova(lm1)
+
+lm2<-lmer(median~gwas+(1|population),clines%>%filter(param=="gradient"))
+Anova(lm2)
+```
+
+
+```{r, fig.width=5,fig.height=4}
+
+clinesSummary<-clinesSummary%>%pivot_longer(cols=c(misexpress,gwas),values_to="ld_status",names_to="ld_dataset")
+
+
+clineOutlierGwasSnps<-clinesSummary%>%filter(param=="gradient"&ld_status%in%c("aphenotype-\nassociated"))%>%filter(countOutlier>1)
+gwasSNPs%>%filter(ChromPos%in%clineOutlierGwasSnps$ChromPos)%>%
+  distinct()
+
+clinesSummary%>%filter(param=="gradient"&ld_status==c("misexpressed"))%>%filter(countOutlier>1)
+
+```
+
+
+```{r, fig.width=5,fig.height=4}
+nOut2<-clinesSummary%>%filter(param=="gradient"&countOutlier>1)%>%
+  dplyr::select(ChromPos)%>%distinct()%>%nrow()
+nMisexpress<-nrow(misexpressGenes)
+nGWAS<-nrow(gwasSNPs)
+
+###Figure out expected overlap
+nMisexpress*(nOut2/nLoci)
+nGWAS*(nOut2/nLoci)
+
+figS2<-ggplot(clinesSummary%>%filter(param=="gradient"&ld_status%in%c("misexpressed","aphenotype-\nassociated"))%>%
+         mutate(chromosome=gsub("chromosome_","",chromosome)),
+       aes(x=chromosome,y=meanVal,colour=countOutlier,shape=ld_dataset,group=ld_dataset))+
+  geom_hline(yintercept=1,linetype=2)+
+  geom_point(size=5,stroke=1)+
+  scale_shape_manual(values=c(2,1),name="Dataset")+
+  scale_colour_gradientn(colors=c("grey70","lightpink3","lightpink4"),
+                        name=element_blank())+
+  ylab("cline gradient")
+
+ggsave(figS2,filename="C:/Users/Steph/GitHub_data/bgchm_clines/FigS2.png",width=5,height=4)
+
+# write.csv(clinesSummary%>%filter(param=="gradient"&ld_status%in%c("misexpressed","aphenotype-\nassociated"))%>%
+#          mutate(chromosome=gsub("chromosome_","",chromosome)))
+
+misexpressOverlap<-clinesSummary%>%filter(param=="gradient"&ld_status=="misexpressed"&countOutlier>1)%>%
+  pull(ChromPos)
+
+misexpressGenes%>%filter(ChromPos%in%misexpressOverlap)%>%pull(gene)
+figS2
+
+```
+
+
+```{r}
+ggplot(clinesSummary%>%filter(param=="gradient"),aes(x=ld_status,y=meanVal))+
+  geom_jitter(colour="grey70",size=0.8)+
+  geom_boxplot(fill=NA,colour="lightpink4",linewidth=1)+
+  xlab("")+ylab("cline gradient")+
+  scale_x_discrete(labels=c("phenotype-\nassociated","not phenotype-\nassociated",
+                            "misexpressed","not misexpressed"))
+
+```
+
+
+```{r}
+
+
+llcline<-function(h=NA,v=0,u=0){
+  phi<-(h^v)/(h^v + (1-h)^v * exp(u))
+  return(phi)
+}
+
+
+clines2<-left_join(
+  clines%>%
+    filter(param=="centre")%>%
+    rename(centre_median=median,centre_outlier=outlier)%>%
+    dplyr::select(population,ChromPos,centre_median,centre_outlier),
+  clines%>%
+    filter(param=="gradient")%>%
+    rename(gradient_median=median,gradient_outlier=outlier)%>%
+    dplyr::select(population,ChromPos,gradient_median,gradient_outlier))
+
+
+
+```
+
+
+```{r, echo=F}
+plotIn<-data.frame()
+
+hh<-seq(0,1,0.01)
+
+for(i in 1:nrow(clines2)){
+
+  plotIn.i<-data.frame(xIn=hh,
+                       yIn=llcline(h=hh,v=as.numeric(clines2[i,"gradient_median"]),
+                                   u=as.numeric(clines2[i,"centre_median"])),
+                       ChromPos=as.character(clines2[i,"ChromPos"]),
+                       population=as.character(clines2[i,"population"]),
+                       gradientOutlier=as.character(clines2[i,"gradient_outlier"]),
+                       centreOutlier=as.character(clines2[i,"centre_outlier"]))
+  plotIn<-rbind(plotIn,plotIn.i)
+  
+  if(i%%100==0){print(paste(i,"/",nrow(clines2)))}
+}
+
+```
+
+```{r}
+
+plotIn<-plotIn%>%mutate(population=factor(population,levels=c("Alaska","Pemberton","Hope","Washington")))
+
+p_gradients<-ggplot(plotIn,aes(x=xIn,y=yIn,group=interaction(ChromPos,population),
+                  colour=gradientOutlier,size=gradientOutlier))+
+  geom_line()+coord_equal()+
+  scale_size_manual(values=c(0.3,0.5),name="Cline gradient",guide="none")+
+  scale_colour_manual(values=c("grey70","lightpink4"),name="Cline gradient",guide="none")+
+  xlab("Ancestry")+ylab("P(coastal)")+
+  facet_grid(rows=vars(population))+
+  scale_x_continuous(breaks=c(0,0.5,1))+
+  scale_y_continuous(breaks=c(0,0.5,1))
+
+
+```
+
+```{r}
+sel1<-ggplot(plotIn,aes(x=xIn,y=yIn,group=interaction(ChromPos,population),
+                  colour=gradientOutlier,size=gradientOutlier))+
+  geom_line()+coord_equal()+
+  scale_size_manual(values=c(0.3,0.5),name="Cline gradient",guide="none")+
+  scale_colour_manual(values=c("grey70","lightpink4"),name="Cline gradient",guide="none")+
+  xlab("Ancestry")+ylab("P(coastal)")+
+  facet_wrap(vars(population))+
+  scale_x_continuous(breaks=c(0,0.5,1))+
+  scale_y_continuous(breaks=c(0,0.5,1))
+
+ggsave("C:/Users/Steph/GitHub/thrush_hybrids/genomic_clines/presentation_selection.png",sel1,
+       width=5,height=5)
+
+
+```
+
+```{r}
+head(plotIn)
+plotIn2<-plotIn%>%left_join(clines2%>%dplyr::select(ChromPos,population,centre_median))%>%
+  mutate(centreOutlier2=case_when(centreOutlier=="y"&centre_median>0.5~"y1",
+                                 centreOutlier=="y"&centre_median<0.5~"y2",
+                                 TRUE~centreOutlier))%>%
+  arrange(centreOutlier)
+
+int1<-ggplot(plotIn2,aes(x=xIn,y=yIn,group=interaction(ChromPos,population),
+                  colour=centreOutlier2,size=centreOutlier))+
+  geom_line()+coord_equal()+
+  scale_size_manual(values=c(0.3,0.5),name="Cline gradient",guide="none")+
+  scale_colour_manual(values=c("grey70","goldenrod","cadetblue"),name="Cline gradient",guide="none")+
+  xlab("Ancestry")+ylab("P(coastal)")+
+  facet_wrap(vars(population))+
+  scale_x_continuous(breaks=c(0,0.5,1))+
+  scale_y_continuous(breaks=c(0,0.5,1))
+
+int1
+
+ggsave("C:/Users/Steph/GitHub/thrush_hybrids/genomic_clines/presentation_introgression.png",int1,
+       width=5,height=5)
+
+
+```
+
+```{r, fig.width=10,fig.height=6}
+
+p1<-ggpubr::ggarrange(pClines,p_gradients,widths=c(2.5,1),labels=c("A","B"))
+p1
+# ggsave("C:/Users/Steph/GitHub_data/bgchm_clines/Fig2.png",
+#        plot=p1,width=10,height=6,units="in",bg="white")
+
+```
+
+
+```{r}
+
+rho<-read.csv("C:/Users/Steph/GitHub/thrush_hybrids/genomeArchitecture.100kb.20240808.csv")
+rho<-rho%>%
+  mutate(ChromPos100kb=paste(chromosome,sprintf("%010d",plyr::round_any(startpos,100000)),sep="_"))
+colnames(rho)
+substr(unique(rho$chromosome),1,12)
+rho<-rho%>%mutate(chromosomeType=case_when(substr(chromosome,1,12)=="chromosome_Z"~"sex",
+                                      scaffoldLength_Mb<20~"micro",
+                                      scaffoldLength_Mb>40~"macro"))
+
+colnames(clines)
+clines<-clines%>%mutate(posNum=as.numeric(str_split_i(locus,"_",2)))%>%
+  mutate(ChromPos100kb=paste(chromosome,sprintf("%010d",plyr::round_any(posNum,100000)),sep="_"))%>%
+  left_join(rho%>%
+              dplyr::select(ChromPos100kb,mean_cMMb,gene_density_100kb,scaffoldLength_Mb,Fst,chromosomeType,logRatioMu))
+
+plotIn<-plotIn%>%
+  mutate(posNum=as.numeric(str_remove(str_split_i(ChromPos," ",2),"^0+")))%>%
+  mutate(chromosome=str_split_i(ChromPos," ",1))%>%
+  mutate(ChromPos100kb=paste(chromosome,sprintf("%010d",plyr::round_any(posNum,100000,floor)),sep="_"))%>%
+  left_join(rho%>%
+              dplyr::select(ChromPos100kb,mean_cMMb,gene_density_100kb,scaffoldLength_Mb,Fst,chromosomeType,logRatioMu))
+
+# write.csv(clines,
+#           file="C:/Users/Steph/GitHub/thrush_hybrids/genomicFeatures/clinesGenomeArchitecture.csv",
+#           row.names=F)
+
+```
+
+```{r, echo=F}
+plotInAvg<-data.frame()
+clines2Sum<-clines2%>%group_by(ChromPos)%>%
+  dplyr::summarise(mean_gradient=mean(gradient_median),
+                   mean_centre=mean(centre_median))
+
+hh<-seq(0,1,0.01)
+
+for(i in 1:nrow(clines2Sum)){
+
+  plotIn.i<-data.frame(xIn=hh,
+                       yIn=llcline(h=hh,v=as.numeric(clines2Sum[i,"mean_gradient"]),
+                                   u=as.numeric(clines2Sum[i,"mean_centre"])),
+                       ChromPos=as.character(clines2Sum[i,"ChromPos"]))
+  plotInAvg<-rbind(plotInAvg,plotIn.i)
+  
+  if(i%%100==0){print(paste(i,"/",nrow(clines2Sum)))}
+}
+
+plotInAvg<-plotInAvg%>%
+  mutate(posNum=as.numeric(str_remove(str_split_i(ChromPos," ",2),"^0+")))%>%
+  mutate(chromosome=str_split_i(ChromPos," ",1))%>%
+  mutate(ChromPos100kb=paste(chromosome,sprintf("%010d",plyr::round_any(posNum,100000,floor)),sep="_"))%>%
+  left_join(rho%>%
+              dplyr::select(ChromPos100kb,mean_cMMb,gene_density_100kb,scaffoldLength_Mb,Fst,chromosomeType,logRatioMu))
+
+
+```
+
+
+```{r,fig.width=8,fig.height=3}
+
+p1<-ggplot(plotInAvg%>%filter(!is.na(logRatioMu))%>%arrange(abs(logRatioMu)),
+       aes(x=xIn,y=yIn,group=ChromPos,
+                  colour=logRatioMu))+
+  geom_line(size=0.5)+coord_equal()+
+  xlab("Ancestry")+ylab("P(coastal)")+
+  scale_colour_gradient2(mid='grey95',high="goldenrod4",low="cadetblue4",
+                         name=expression(log(mu["inland"] / mu["coastal"])))+
+  #scale_colour_gradientn(colors=c("cadetblue4","cadetblue","grey95","goldenrod","goldenrod4"),midpoint=0)+
+  #facet_wrap(vars(population))+
+  scale_x_continuous(breaks=c(0,0.5,1))+
+  scale_y_continuous(breaks=c(0,0.5,1))
+
+p2<-ggplot(plotInAvg%>%filter(!is.na(Fst))%>%arrange(Fst),
+       aes(x=xIn,y=yIn,group=ChromPos,
+                  colour=Fst))+
+  geom_line(size=0.5)+coord_equal()+
+  xlab("Ancestry")+ylab("P(coastal)")+
+  scale_colour_gradient2(mid='grey95',high="lightpink4",low="grey90",
+                         name=expression(F["ST"]))+
+  #scale_colour_gradientn(colors=c("cadetblue4","cadetblue","grey95","goldenrod","goldenrod4"),midpoint=0)+
+  #facet_wrap(vars(population))+
+  scale_x_continuous(breaks=c(0,0.5,1))+
+  scale_y_continuous(breaks=c(0,0.5,1))
+
+p3<-ggarrange(p1,p2,align='v',labels=LETTERS)
+
+ggsave("C:/Users/Steph/GitHub_data/bgchm_clines/Fig6.png",
+       plot=p3,width=10,height=3,units="in",bg="white")
+
+
+```
+
+Log scale for recombination rate makes things better
+
+```{r}
+
+p1a<-ggplot(clines%>%filter(param=="gradient"),
+       aes(x=mean_cMMb,y=median,colour=population,fill=population))+
+  geom_point(size=0.3)+
+  geom_smooth(method="lm")+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  xlab("recombination (cM/Mb)")
+
+p1b<-ggplot(clines%>%filter(param=="gradient"),
+       aes(x=log(mean_cMMb),y=median,colour=population,fill=population))+
+  geom_point(size=0.3)+
+  geom_smooth(method="lm")+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  xlab(" recombination (log scale)")
+
+p1c<-ggplot(clines%>%filter(param=="gradient"),
+       aes(x=mean_cMMb,colour=population,fill=population))+
+  geom_histogram()+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  xlab(" recombination (cM/Mb)")
+
+p1d<-ggplot(clines%>%filter(param=="gradient"),
+       aes(x=log(mean_cMMb),colour=population,fill=population))+
+  geom_histogram()+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  xlab(" recombination (log scale)")
+
+
+
+ggarrange(p1c,p1d,p1a,p1b,common.legend=T,legend="right")
+
+```
+
+Log scale for gene density makes things worse
+
+```{r,fig.height=2,fig.width=6}
+p1c<-ggplot(clines%>%filter(param=="gradient"),
+       aes(x=gene_density_100kb,colour=population,fill=population))+
+  geom_histogram()+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  xlab("genes/100kb")
+
+p1d<-ggplot(clines%>%filter(param=="gradient"),
+       aes(x=log(gene_density_100kb),colour=population,fill=population))+
+  geom_histogram()+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  xlab("gene density (log scale)")
+
+
+
+ggarrange(p1c,p1d,common.legend=T,legend="right")
+
+
+
+```
+
+
+```{r,fig.width=7,fig.height=5}
+
+p1<-ggplot(clines%>%filter(param=="gradient"),
+       aes(x=log(mean_cMMb),y=median,colour=population,fill=population))+
+  geom_point(size=0.3)+
+  geom_smooth(method="lm")+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  xlab("Recombination (log scale)")+
+  ylab("Cline gradient")
+
+p2<-ggplot(clines%>%filter(param=="gradient"),
+       aes(x=Fst,y=median,colour=population,fill=population))+
+  geom_point(size=0.3)+
+  geom_smooth(method="lm")+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  xlab("Fst")+
+  ylab("Cline gradient")
+
+
+p3<-ggplot(clines%>%filter(param=="gradient"),
+       aes(x=gene_density_100kb,y=median,colour=population,fill=population))+
+  geom_point(size=0.3)+
+  geom_smooth(method="lm")+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  xlab("Genes/100kb")+
+  ylab("Cline gradient")
+
+p4<-ggplot(clines%>%filter(param=="gradient"&!is.na(chromosomeType)),
+       aes(x=chromosomeType,y=median,colour=population,fill=population))+
+  #geom_point(size=0.3,position=position_jitterdodge(jitter.width=0.1))+
+  geom_boxplot(fill=NA)+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  xlab("Chromosome Type")+
+  ylab("Cline gradient")
+
+
+gg1<-ggarrange(p1,p2,p3,p4,common.legend=T,nrow=2,ncol=2,legend="right",labels=LETTERS)
+gg1
+
+# ggsave("C:/Users/Steph/GitHub/thrush_hybrids/genomic_clines/clineGradients_genomeStructure.png",gg1,
+#        width=10,height=2.5,units="in",bg='white')
+
+
+
+```
+
+
+
+
+```{r}
+library(lme4)
+
+#slower cline gradients with more genes
+lmm1<-lmer(median~gene_density_100kb+(1|population),data=clines%>%filter(param=="gradient"))
+summary(lmm1)
+confint(lmm1)
+Anova(lmm1)
+
+#slower cline gradients with faster recombination
+lmm2<-lmer(median~log(mean_cMMb)+(1|population),data=clines%>%filter(param=="gradient"))
+summary(lmm2)
+confint(lmm2)
+Anova(lmm2)
+
+#no relationship to Fst
+lmm3<-lmer(median~Fst+(1|population),data=clines%>%filter(param=="gradient"))
+summary(lmm3)
+confint(lmm3)
+Anova(lmm3)
+
+lmm4<-lmer(median~chromosomeType+(1|population),data=clines%>%filter(param=="gradient"))
+summary(lmm4)
+confint(lmm4)
+emmeans::emmeans(lmm4,"chromosomeType")
+Anova(lmm4)
+
+lmm5<-lmer(median~abs(logRatioMu)+(1|population),data=clines%>%filter(param=="gradient"))
+summary(lmm5)
+confint(lmm5)
+
+
+```
+
+```{r,fig.width=7,fig.height=5}
+
+p1<-ggplot(clines%>%filter(param=="centre"),
+       aes(x=log(mean_cMMb),y=abs(median-0.5),colour=population,fill=population))+
+  geom_point(size=0.3)+
+  geom_smooth(method="lm")+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  xlab("recombination (log scale)")
+
+p2<-ggplot(clines%>%filter(param=="centre"),
+       aes(x=Fst,y=abs(median-0.5),colour=population,fill=population))+
+  geom_point(size=0.3)+
+  geom_smooth(method="lm")+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  xlab("Fst")
+
+
+p3<-ggplot(clines%>%filter(param=="centre"),
+       aes(x=gene_density_100kb,y=abs(median-0.5),colour=population,fill=population))+
+  geom_point(size=0.3)+
+  geom_smooth(method="lm")+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  xlab("genes/100kb")
+
+p4<-ggplot(clines%>%filter(param=="centre"&!is.na(chromosomeType)),
+       aes(x=chromosomeType,y=abs(median-0.5),colour=population,fill=population))+
+  #geom_point(size=0.3,position=position_jitterdodge(jitter.width=0.1))+
+  geom_boxplot(fill=NA)+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  xlab("Chromosome Type")+
+  ylab("Cline gradient")
+
+
+gg2<-ggarrange(p1,p2,p3,p4,common.legend=T,nrow=2,ncol=2,legend="right",labels=LETTERS)
+gg2
+
+ggsave("C:/Users/Steph/GitHub/thrush_hybrids/genomic_clines/clineCentres_genomeStructure.png",
+       gg2,width=10,height=2.5,units="in",bg='white')
+
+```
+
+```{r}
+library(lme4)
+
+#genes
+lmm1<-lmer(abs(median-0.5)~gene_density_100kb+(1|population),data=clines%>%filter(param=="centre"))
+summary(lmm1)
+confint(lmm1)
+Anova(lmm1)
+
+#recombination
+lmm2<-lmer(abs(median-0.5)~log(mean_cMMb)+(1|population),data=clines%>%filter(param=="centre"))
+summary(lmm2)
+confint(lmm2)
+Anova(lmm2)
+
+#no relationship to Fst
+lmm3<-lmer(abs(median-0.5)~Fst+(1|population),data=clines%>%filter(param=="centre"))
+summary(lmm3)
+confint(lmm3)
+Anova(lmm3)
+
+lmm4<-lmer(abs(median-0.5)~chromosomeType+(1|population),data=clines%>%filter(param=="centre"))
+summary(lmm4)
+confint(lmm4)
+emmeans::emmeans(lmm4,"chromosomeType")
+Anova(lmm4)
+
+
+lmm5<-lmer(median~logRatioMu+(1|population),data=clines%>%filter(param=="centre"))
+summary(lmm5)
+confint(lmm5)
+Anova(lmm5)
+
+```
+
+```{r,fig.width=7,fig.height=3}
+
+p1<-ggplot(clines%>%filter(param=="centre"),
+       aes(x=logRatioMu,y=median,colour=population,fill=population))+
+  geom_point(size=0.3)+
+  geom_smooth(method="lm")+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  xlab(expression(log(mu["inland"] / mu["coastal"])))+
+  ylab("Cline centre")
+
+p2<-ggplot(clines%>%filter(param=="gradient"),
+       aes(x=abs(logRatioMu),y=median,colour=population,fill=population))+
+  geom_point(size=0.3)+
+  geom_smooth(method="lm")+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  xlab(expression(paste("| ",log(mu["inland"] / mu["coastal"])," |")))+
+  ylab("Cline gradient")
+
+ggarrange(p1,p2,common.legend=T,legend="right")
+
+```
