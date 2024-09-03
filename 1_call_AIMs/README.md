@@ -1,8 +1,10 @@
-# thrush_aims
+# Call ancestry informative markers in Swainson's thrushes
 
-Pipeline to get AIMs adapted from ancestryInfer
+Pipeline to get AIMs
 
-## 01 get AIMs
+Adapted from ancestryInfer
+
+## 01 find divergent markers
 
 Starting from two fasta sequences for reference genomes, convert one to a pseudoref that is collinear with the other
 
@@ -38,4 +40,4 @@ Run AncestryHMM
 
 Get posterior probs of each state
 
-Get estimated state for where above cutoff in table and plink formats
+Get estimated ancestry state for sites above cutoff; output in table and plink formats
