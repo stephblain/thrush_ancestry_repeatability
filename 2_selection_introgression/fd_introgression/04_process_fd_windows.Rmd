@@ -1,0 +1,374 @@
+---
+title: "plot fd windows"
+author: "steph"
+date: "2024-04-09"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_knit$set(root.dir="C:/Users/Steph/GitHub_data/d_stats/")
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
+
+```{r}
+library(tidyverse)
+theme_set(theme_classic())
+library(viridis)
+
+aimsMeta<-read_csv("C:/Users/Steph/GitHub_data/AIMs_metaData/AIMs_metadata_240227.csv")
+
+poly.all<-data.frame(X.co=rep(c(0,0.5,1)), #make triangle polygon for plotting
+                     Y.co=rep(c(0,1,0)))
+
+scaf_order<-read.csv("C:/Users/Steph/Downloads/scaffold_order.csv")
+
+scaf_order<-scaf_order%>%
+  mutate(Assigned.Molecule=case_when(Sequence.Name=="scaffold_26_arrow_ctg1"~"Z1",
+                                     Sequence.Name=="scaffold_29_arrow_ctg1"~"Z2",
+                                     TRUE~Assigned.Molecule))%>%
+  mutate(scaffold=Sequence.Name,#scaffold=gsub("_","-",Sequence.Name),
+         chromosome=paste("chromosome",sprintf("%02d",as.numeric(Assigned.Molecule)),
+                          sep="_"))%>%
+  mutate(chromosome=if_else(Assigned.Molecule%in%c("Z","W","Z1","Z2"),
+                            paste("chromosome",Assigned.Molecule,sep="_"),chromosome))%>%
+  dplyr::select(scaffold,chromosome)
+
+rho<-read.csv("C:/Users/Steph/GitHub/thrush_hybrids/genomeArchitecture.100kb.20240808.csv")
+
+hybCol="#849D74"
+
+```
+
+
+```{r, fig.widht=5,fig.height=5}
+sexScafs=c("super_scaffold_7","scaffold_26_arrow_ctg1","scaffold_29_arrow_ctg1")
+
+ggplot(rho%>%filter(!scaffold%in%sexScafs),aes(x=mean_cMMb,y=gene_density_100kb))+geom_point()
+rho<-rho%>%filter(mean_cMMb<3,gene_density_100kb<40)
+
+mean(rho$gene_density,na.rm=T)+2*sd(rho$gene_density_100kb,na.rm=T)
+
+```
+
+# introgression from coastal to inland populations adjacent to hybrid zone
+
+Coastal (Pacific Spirit and Porpoise Bay) to BC inland (Kelowna and Kamloops) with Quebec inland as inland sister population and Hermit thrush as outgroup
+
+```{r}
+
+dstatsQc<-read_table("C:/Users/Steph/GitHub_data/d_stats/Quebec_inland_coastal_localFstats__100_100.txt")
+
+rho<-rho%>%mutate(chromosomeType=case_when(substr(chromosome,1,12)=="chromosome_Z"~"sex",
+                                      scaffoldLength_Mb<20~"micro",
+                                      scaffoldLength_Mb>40~"macro"))
+
+dstatsQc<-dstatsQc%>%
+  dplyr::rename(scaffold=chr)%>%
+  left_join(scaf_order)%>%
+  filter(chromosome!="chromosome_NA")%>%
+  mutate(position=sprintf("%010d",as.numeric(windowStart)))%>%
+  mutate(ChromPos=paste(chromosome,position,sep="-"))%>%
+  mutate(startpos=plyr::round_any(windowStart,100000))%>%
+  left_join(rho%>%dplyr::select(chromosome,startpos,mean_cMMb,gene_density_100kb,scaffoldLength_Mb,Fst,chromosomeType,logRatioMu))
+
+# 
+# write.csv(dstatsQc,file="C:/Users/Steph/GitHub/thrush_hybrids/genomicFeatures/fdGenomeArchitecture.csv",
+#           row.names=F)
+
+ggplot(dstatsQc%>%filter(!scaffold%in%sexScafs),aes(x=log(mean_cMMb),y=gene_density_100kb))+geom_point()+
+  geom_smooth(colour="firebrick",fill="firebrick",method="lm")
+
+
+
+```
+
+### check overall direction of introgression
+
+fdM allows for introgression to both subspecies
+
+Most introgression is coastal to BC inland
+
+Some signal in the other direction, but this could also be excess allele sharing between BC inland and Hermit thrush
+
+```{r,fig.height=2,fig.width=8}
+
+ggplot(dstatsQc,
+       aes(x=ChromPos,y=f_dM,colour=chromosome))+
+  geom_point(size=0.2)+
+  scale_colour_manual(values=rep(c("grey20","grey60"),
+                                 round(length(unique(dstatsQc$chromosome)))/2+1),guide="none")+
+  theme(axis.text.x=element_blank(),
+        axis.ticks=element_blank(),line=element_blank(),
+        panel.border=element_rect(colour="grey10",fill=NA,linewidth=0.5),
+        legend.position="right")+
+  geom_hline(aes(yintercept=0),colour="thistle3")+
+  ylab(expression(f["dM"]))+
+  xlab("genome position")
+
+fdPlot<-ggplot(dstatsQc%>%filter(f_dM>0),
+       aes(x=ChromPos,y=f_d,colour=chromosome))+
+  geom_point(size=0.2)+
+  scale_colour_manual(values=rep(c("grey20","grey60"),
+                                 round(length(unique(dstatsQc$chromosome)))/2+1),guide="none")+
+  theme(axis.text.x=element_blank(),
+        axis.ticks=element_blank(),line=element_blank(),
+        panel.border=element_rect(colour="grey10",fill=NA,linewidth=0.5),
+        legend.position="right")+
+  ylab(expression(f["d"]))+
+  xlab("Genome position")
+
+ggplot(dstatsQc%>%filter(f_dM>0),
+       aes(x=ChromPos,y=f_d,colour=chromosome,group=chromosome))+
+  geom_point(size=0.1)+
+  scale_colour_manual(values=rep(c("grey20","grey60"),
+                                 round(length(unique(dstatsQc$chromosome)))/2+1),guide="none")+
+  geom_smooth(width=0.1,colour=hybCol)+
+  theme(axis.text.x=element_blank(),
+        axis.ticks=element_blank(),line=element_blank(),
+        panel.border=element_rect(colour="grey10",fill=NA,linewidth=0.5),
+        legend.position="right")+
+  ylab(expression(f["d"]))+
+  xlab("genome position")
+
+#ggsave(p1,file="c:/Users/Steph/GitHub/thrush_hybrids/d_stats/fd_genome.png",
+#       height=1.5,width=6)
+```
+```{r,fig.height=2,fig.width=3}
+
+ggplot(dstatsQc,
+       aes(x=f_dM))+
+  geom_histogram(binwidth = 0.02)+
+  geom_vline(aes(xintercept=0),colour=hybCol)+
+  xlab(expression(f["dM"]))
+
+dstatsQc%>%summarise(mean_D=mean(D),mean_fdM=mean(f_dM))
+
+
+```
+
+### test for a relationship to recombination rate
+
+Limit to windows where f dM is above zero (i.e. introgression is coastal to local inland)
+
+Positive relationship between fd and recombination rate - this suggests selection against introgression
+
+```{r,fig.height=3,fig.width=3}
+
+
+p1<-ggplot(dstatsQc%>%filter(f_dM>0&mean_cMMb<3),
+       aes(x=mean_cMMb,y=f_d))+
+  geom_point(size=0.3,colour="grey20")+
+  geom_smooth(method="lm",colour=hybCol)+
+  ylab(expression(f["d"]))+
+  xlab("recombination (cM/Mb)")
+
+p2<-ggplot(dstatsQc%>%filter(f_dM>0&mean_cMMb<3),
+       aes(x=Fst,y=f_d))+
+  geom_point(size=0.3,colour="grey20")+
+  geom_smooth(method="lm",colour=hybCol)+
+  ylab(expression(f["d"]))+
+  xlab(expression(F["ST"]))+ylim(0,0.82)
+
+```
+
+```{r}
+ggplot(dstatsQc%>%filter(f_dM>0),
+       aes(x=gene_density_100kb,y=f_d))+
+  geom_point(size=0.3,colour="grey20")+
+  geom_smooth(method="lm",colour="thistle3")+
+  ylab(expression(f["d"]))+
+  xlab("gene density")
+
+ggplot(dstatsQc%>%filter(f_dM>0),
+       aes(x=scaffoldLength_Mb,y=f_d))+
+  geom_point(size=0.3,colour="grey20")+
+  geom_smooth(method="lm",colour="thistle3")+
+  ylab(expression(f["d"]))+
+  xlab("scaffold length")
+```
+
+```{r}
+
+###microchromosomes = higher recomb, higher genic density, shorter length
+
+rho<-rho%>%mutate(chromNum=gsub("chromosome_","",chromosome))
+rho_plot<-rho%>%dplyr::select(chromosome,chromNum,gene_density_100kb,scaffoldLength,mean_cMMb)%>%
+  pivot_longer(cols=c(gene_density_100kb,mean_cMMb),names_to="genome_feature")%>%
+  filter(!is.na(chromNum))
+
+
+
+#ggplot(rho,aes(x=gsub("chromosome_","",chromosome),y=mean_cMMb))+geom_boxplot()
+
+ggplot(rho_plot%>%filter(scaffoldLength>10000000),aes(x=chromNum,y=value,colour=genome_feature))+
+  geom_boxplot(outlier.shape=NA)+
+  scale_colour_manual(values=c("thistle4","thistle3"),name="",labels=c("genes/10kb","cM/Mb"))+
+  ylim(0,13)
+
+p3<-ggplot(rho_plot%>%group_by(chromosome,chromNum,scaffoldLength,genome_feature)%>%
+  dplyr::summarise(medianVal=median(value))%>%filter(scaffoldLength>10000000),
+  aes(x=chromNum,y=medianVal,fill=genome_feature,group=genome_feature))+
+  geom_bar(stat="identity",position="dodge")+
+  scale_fill_manual(values=c(hybCol,"#ADB593"),name="",labels=c("genes/\n100kb","cM/Mb"))+
+  ylab("median value")+xlab("chromosome")
+
+
+```
+```{r}
+tree1<-ape::read.tree(text ="(((Inland Quebec,Inland BC),Coastal),Hermit Thrush);")
+# tree1$tip.label<-c("Inland Quebec","Inland BC","Coastal","Hermit Thrush")
+# colList=c("goldenrod4","goldenrod4","cadetblue4","grey30")
+# treePlot<-plot(tree1,tip.color = colList)
+library(ggtree)
+
+tree2<-ape::read.tree(text ="((Inland Quebec,(Inland BC,Coastal)),Hermit Thrush);")
+tree2$node<-1:3
+
+treePlot<-ggtree(tree1)+
+  geom_label(aes(label=c("Inland BC","Inland Quebec","Coastal","Hermit Thrush","","","")),
+             colour=c("goldenrod4","goldenrod4","cadetblue4","grey30","grey30","grey30","grey30"))+xlim(0, +5)
+treePlot
+
+tree2<-ape::makeNodeLabel(tree2,method="number")
+tree2$Nnode
+treeplot2<-ggtree(tree2)%>%flip(1,7)%>%flip(2,3)+#geom_text(aes(label=node))
+  geom_label(aes(label=c("Inland Quebec","Inland BC","Coastal","Hermit Thrush","","","")),
+             colour=c("goldenrod4","goldenrod4","cadetblue4","grey30","grey30","grey30","grey30"))+xlim(0, +5)
+treeplot3<-ggtree(tree2)%>%flip(1,7)%>%flip(2,3)+#geom_text(aes(label=node))
+  geom_label(aes(label=c("Inland BC","Inland Quebec","Coastal","Hermit Thrush","","","")),
+             colour=c("goldenrod4","goldenrod4","cadetblue4","grey30","grey30","grey30","grey30"))+xlim(0, +5)
+
+treeplot3
+```
+
+```{r,fig.height=6,fig.width=8}
+
+library(ggpubr)
+p4<-ggarrange(fdPlot,
+  ggarrange(ggarrange(p1,p2,ncol=1),
+              ggarrange(treePlot,p3,ncol=1,labels=c("C","D")),
+              ncol=2,widths=c(1.7,3),
+            labels=c("B","")),
+  nrow=2,heights = c(1.5,4),labels=c("A",""))
+p4
+```
+
+```{r,fig.height=4,fig.width=8}
+
+fig4=ggarrange(fdPlot,
+               ggarrange(treePlot,treeplot2,treeplot3,nrow=1,ncol=3,
+                         labels=c("Species tree","Hybridization","Discordance")),
+               nrow=2,ncol=1,labels=LETTERS,
+               heights=c(0.8,1),widths=c(0.8,1))
+
+fig4
+
+ggsave("C:/Users/Steph/GitHub/thrush_hybrids/d_stats/Fig4.png",plot=fig4,
+       height=4,width=8,units="in")
+
+```
+
+
+```{r}
+#ggsave("C:/Users/Steph/GitHub/thrush_hybrids/d_stats/Fig5.png",p4,
+#       height=6,width=7,units="in")
+
+```
+
+
+```{r}
+
+
+lm1<-lm(f_d~log(mean_cMMb),dstatsQc%>%filter(f_dM>0))
+summary(lm1)
+confint(lm1)
+
+
+lm2<-lm(f_d~gene_density_100kb,dstatsQc%>%filter(f_dM>0))
+summary(lm2)
+confint(lm2)
+
+
+lm3<-lm(f_d~Fst,dstatsQc%>%filter(f_dM>0))
+summary(lm3)
+confint(lm3)
+
+lm4<-lm(f_d~chromosomeType,dstatsQc%>%filter(f_dM>0))
+summary(lm4)
+confint(lm4)
+emmeans::emmeans(lm4,"chromosomeType")
+
+lm5<-lm(f_d~abs(logRatioMu),dstatsQc%>%filter(f_dM>0))
+summary(lm5)
+confint(lm5)
+
+```
+
+
+```{r,fig.height=6,fig.width=6}
+
+lm1<-lm(f_d~scaffoldLength_Mb+gene_density_100kb+mean_cMMb+Fst,dstatsQc%>%filter(f_dM>0)%>%
+          filter(!scaffold%in%sexScafs))
+summary(lm1)
+confint(lm1)
+#plot(lm1)
+
+lm1scaf1<-lm(f_d~gene_density_100kb+mean_cMMb+Fst,dstatsQc%>%filter(f_dM>0)%>%
+          filter(scaffold=="super_scaffold_1"))
+
+summary(lm1scaf1)
+confint(lm1scaf1)
+
+lm1scaf3<-lm(f_d~gene_density_100kb+mean_cMMb+Fst,dstatsQc%>%filter(f_dM>0)%>%
+          filter(scaffold=="super_scaffold_3"))
+
+summary(lm1scaf3)
+confint(lm1scaf3)
+
+lm1scaf4<-lm(f_d~gene_density_100kb+mean_cMMb+Fst,dstatsQc%>%filter(f_dM>0)%>%
+          filter(scaffold=="scaffold_4_arrow_ctg1"))
+summary(lm1scaf4)
+confint(lm1scaf4)
+
+lm1scaf7<-lm(f_d~gene_density_100kb+mean_cMMb+Fst,dstatsQc%>%filter(f_dM>0)%>%
+          filter(scaffold=="super_scaffold_7"))
+
+
+lmOutQc<-rbind(data.frame(coef=lm1$coefficients,scaffold="autosomes")%>%
+  rownames_to_column(var="parameter"),
+data.frame(coef=lm1scaf1$coefficients,scaffold="scaffold_1")%>%
+  rownames_to_column(var="parameter"),
+data.frame(coef=lm1scaf3$coefficients,scaffold="scaffold_3")%>%
+  rownames_to_column(var="parameter"),
+data.frame(coef=lm1scaf4$coefficients,scaffold="scaffold_4")%>%
+  rownames_to_column(var="parameter"),
+data.frame(coef=lm1scaf7$coefficients,scaffold="scaffold_7")%>%
+  rownames_to_column(var="parameter"))
+lmOutQc<-lmOutQc%>%filter(parameter!="(Intercept)")
+
+```
+
+### variation across the genome
+
+Note, as always, chromosome 5
+
+```{r,fig.height=2,fig.width=8}
+
+ggplot(dstatsQc%>%filter(f_dM>0),
+       aes(x=ChromPos,y=f_d,colour=chromosome))+
+  geom_point(size=0.2)+
+  scale_colour_manual(values=rep(c("grey20","grey60"),
+                                 round(length(unique(dstatsQc$chromosome)))/2+1),guide="none")+
+  theme(axis.text.x=element_blank(),
+        axis.ticks=element_blank(),line=element_blank(),
+        panel.border=element_rect(colour="grey10",fill=NA,linewidth=0.5),
+        legend.position="right")+
+  ylab(expression(f["d"]))+
+  xlab("genome position")
+
+
+```

@@ -1,0 +1,218 @@
+---
+title: "positive selection"
+author: "steph"
+date: "2024-08-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(tidyverse); library(ggpubr); library(plyr); library(patchwork)
+theme_set(theme_classic())
+
+options(scipen=999)
+
+#rho<-read.csv("C:/Users/Steph/GitHub/thrush_hybrids/genomeArchitecture.100kb.csv")
+```
+Read in and prep scaf order
+
+File from Hannah that includes the various names associated with each scaffold
+
+```{r}
+
+scaf_order<-read.csv("C:/Users/Steph/Downloads/scaffold_order.csv")
+
+scaf_order<-scaf_order%>%
+  mutate(Assigned.Molecule=case_when(Sequence.Name=="scaffold_26_arrow_ctg1"~"Z1",
+                                     Sequence.Name=="scaffold_29_arrow_ctg1"~"Z2",
+                                     TRUE~Assigned.Molecule))%>%
+  mutate(scaffold=Sequence.Name,#scaffold=gsub("_","-",Sequence.Name),
+         chromosome=paste("chromosome",sprintf("%02d",as.numeric(Assigned.Molecule)),
+                          sep="_"))%>%
+  mutate(chromosome=if_else(Assigned.Molecule%in%c("Z","W","Z1","Z2"),
+                            paste("chromosome",Assigned.Molecule,sep="_"),chromosome))%>%
+  dplyr::select(scaffold,chromosome)
+
+
+```
+
+* Process recomb rate data
+* Estimated by Kira with rhomap in 100kb windows with inland subspecies
+
+```{r}
+
+rho<-read.csv("C:/Users/Steph/GitHub_data/rhomap_res_win_100kb.csv")
+
+Ne1=570338 #from Bay & Ruegg
+
+rho<-rho%>%mutate(startpos=midpos-50000)%>%
+  dplyr::rename(scaffold=chr)%>%
+  dplyr::select(mean_rho,scaffold,startpos)%>%
+  mutate(mean_cMMb=mean_rho*1000000/(4*Ne1*10))
+```
+
+* Process gene densities
+* Estimated by me as the number of genes in the annotation per 100kb window
+
+```{r}
+
+geneDensities<-read.csv("C:/Users/Steph/GitHub_data/d_stats/gene_densities_100kb.csv")
+geneDensities<-geneDensities%>%mutate(startpos=startPos-1)%>%
+  dplyr::select(scaffold,startpos,n_genes,gene_density,scaffoldLength)
+
+```
+
+* Process Fst between the subspecies
+* Estimated in windows with vcftools from the ref bird vcf I made for AIMs identification
+
+
+```{r}
+
+refFst<-read_table("C:/Users/Steph/GitHub_data/d_stats/thrushRef.windowed.weir.fst")
+refFst<-refFst%>%mutate(startpos=BIN_START-1)%>%
+  filter(N_VARIANTS>10&WEIGHTED_FST>0)%>%
+  dplyr::rename(scaffold=CHROM,Fst=WEIGHTED_FST)%>%
+  dplyr::select(scaffold,startpos,Fst)
+
+```
+
+* Process positive selection estimates
+* SNP-wise estimates from ref bird vcf using RAiSD
+* Estimated for coastals and inlands seperately
+
+```{r}
+
+coastal<-data.table::fread("C:/Users/Steph/GitHub_data/positiveSelection/RAiSD.output.coastal")
+
+names(coastal)<-c("scaffold","position","mu")
+
+coastal100kb<-coastal%>%mutate(temp=round_any(position,100000))%>%
+  mutate(startpos=if_else(position<temp,temp-100000,temp))%>%
+  dplyr::select(-temp)%>%
+  group_by(scaffold,startpos)%>%
+  dplyr::summarise(coastal_mu=median(mu))
+
+rm(coastal)
+
+```
+
+
+```{r}
+
+inland<-data.table::fread("C:/Users/Steph/GitHub_data/positiveSelection/RAiSD.output.inland")
+
+names(inland)<-c("scaffold","position","mu")
+
+
+inland100kb<-inland%>%mutate(temp=round_any(position,100000))%>%
+  mutate(startpos=if_else(position<temp,temp-100000,temp))%>%
+  dplyr::select(-temp)%>%
+  group_by(scaffold,startpos)%>%
+  dplyr::summarise(inland_mu=median(mu))
+
+rm(inland)
+
+```
+* Combine datasets together and assign chromosome type based on scaffold length
+* <20 Mb are microchromosomes, >40Mb are macrochromosomes, based on Ellegren 2013
+
+
+```{r}
+
+rho<-rho%>%left_join(geneDensities)%>%
+  left_join(scaf_order)%>%left_join(refFst)%>%
+  mutate(gene_density_100kb=gene_density*100000,
+         scaffoldLength_Mb=scaffoldLength/1000000)%>%
+  mutate(chromosomeType=case_when(substr(chromosome,1,12)=="chromosome_Z"~"sex",
+                                      scaffoldLength_Mb<20~"micro",
+                                      scaffoldLength_Mb>40~"macro"))%>%
+  left_join(coastal100kb)%>%
+  left_join(inland100kb)%>%
+  mutate(ChromPos=paste(chromosome,sprintf("%010d",startpos),sep="-"))
+
+
+```
+* log-transformation makes things better for recombination rate
+
+
+```{r,fig.width=6,fig.height=3}
+
+a1<-ggplot(rho,aes(x=mean_cMMb))+
+  geom_histogram()
+a2<-ggplot(rho,aes(x=gene_density_100kb))+
+  geom_histogram()
+
+a1+a2
+
+b1<-ggplot(rho,aes(x=log(mean_cMMb)))+
+  geom_histogram()
+b2<-ggplot(rho,aes(x=log(gene_density_100kb)))+
+  geom_histogram()
+
+b1+b2
+  
+ggplot(rho,aes(x=log(mean_cMMb),y=gene_density_100kb))+
+  geom_point()+coord_equal(ratio=0.15)+
+  geom_smooth(colour="firebrick",fill="firebrick",method="lm")
+
+```
+
+
+
+```{r}
+
+
+a1<-ggplot(rho,aes(x=ChromPos,y=coastal_mu,colour=chromosome))+
+  geom_point()+
+  scale_colour_manual(values=rep(c("grey10","grey40"),25),guide="none")+
+  theme(axis.text.x=element_blank(),axis.ticks.x=element_blank())
+
+a2<-ggplot(rho,aes(x=ChromPos,y=inland_mu,colour=chromosome))+
+  geom_point()+
+  scale_colour_manual(values=rep(c("grey10","grey40"),25),guide="none")+
+  theme(axis.text.x=element_blank(),axis.ticks.x=element_blank())
+a1/a2
+
+```
+
+* Identify and filter out outlier regions
+
+```{r,fig.width=6,fig.height=3}
+
+rho<-rho%>%mutate(logRatioMu=log(inland_mu/coastal_mu))
+
+b1<-ggplot(rho,aes(x=coastal_mu,y=inland_mu,colour=chromosome))+
+  geom_point()+coord_equal()+
+  scale_colour_manual(values=rep(c("grey10","grey40"),25),guide="none")
+
+b2<-ggplot(rho,aes(x=logRatioMu))+
+  geom_histogram()
+
+b1+b2
+
+upr<-mean(rho$logRatioMu,na.rm=T)+sd(rho$logRatioMu,na.rm=T)*2
+lwr<-mean(rho$logRatioMu,na.rm=T)-sd(rho$logRatioMu,na.rm=T)*2
+
+#filter out outlier regions
+rho<-rho%>%mutate(ChromPos100kb=gsub("-","_",ChromPos))%>%
+  mutate(logRatioMu=if_else(logRatioMu>upr|logRatioMu<lwr,NA,logRatioMu))
+
+c1<-ggplot(rho,aes(x=logRatioMu))+
+  geom_histogram()
+
+c2<-ggplot(rho,aes(x=abs(logRatioMu)))+
+  geom_histogram()
+
+c1+c2
+
+```
+
+```{r}
+
+write.csv(rho,"C:/Users/Steph/GitHub/thrush_hybrids/genomeArchitecture.100kb.20240808.csv")
+
+```

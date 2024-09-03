@@ -1,0 +1,347 @@
+---
+title: "genome features"
+author: "steph"
+date: "2024-07-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+library(tidyverse); library(ggpubr)
+theme_set(theme_classic())
+
+rho<-read.csv("C:/Users/Steph/GitHub/thrush_hybrids/genomeArchitecture.100kb.20240808.csv")
+
+tracts<-read.csv("C:/Users/Steph/GitHub/thrush_hybrids/genomicFeatures/tractsGenomeArchitecture.csv")
+clines<-read.csv("C:/Users/Steph/GitHub/thrush_hybrids/genomicFeatures/clinesGenomeArchitecture.csv")
+fd<-read.csv("C:/Users/Steph/GitHub/thrush_hybrids/genomicFeatures/fdGenomeArchitecture.csv")
+
+gradients<-clines%>%filter(param=="gradient")
+centres<-clines%>%filter(param=="centre")
+
+pop.cols<-c("#202D26","#49654A","#849D74","#ADB593")
+hybCol="#849D74"
+
+```
+
+
+Make supp mat fig for cline gradients
+
+```{r,fig.width=6.5,fig.height=2.5}
+
+gradients<-gradients%>%
+  mutate(population=factor(population,levels=c("Alaska","Pemberton","Hope","Washington")))
+
+#gradients<-gradients%>%left_join(rho%>%dplyr::select(ChromPos100kb,logRatioMu))
+
+p1gr<-ggplot(gradients,
+       aes(x=log(mean_cMMb),y=median,colour=population,fill=population))+
+  geom_point(size=0.3)+
+  geom_smooth(method="lm")+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  xlab("Recombination (log scale)")+
+  ylab("Cline gradient")
+
+p2gr<-ggplot(gradients,
+       aes(x=Fst,y=median,colour=population,fill=population))+
+  geom_point(size=0.3)+
+  geom_smooth(method="lm")+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  xlab(expression(F["ST"]))+
+  ylab("Cline gradient")
+
+
+p3gr<-ggplot(gradients,
+       aes(x=gene_density_100kb,y=median,colour=population,fill=population))+
+  geom_point(size=0.3)+
+  geom_smooth(method="lm")+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  xlab("Genes/100kb")+
+  ylab("Cline gradient")
+
+p4gr<-ggplot(gradients%>%filter(!is.na(chromosomeType)),
+       aes(x=chromosomeType,y=median,colour=population,fill=population))+
+  #geom_point(size=0.3,position=position_jitterdodge(jitter.width=0.1))+
+  geom_boxplot(fill=NA)+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  xlab("Chromosome Type")+
+  ylab("Cline gradient")
+
+p5gr<-ggplot(gradients,
+       aes(x=abs(logRatioMu),y=median,colour=population,fill=population))+
+  geom_point(size=0.3)+
+  geom_smooth(method="lm")+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  #xlab("|log(mu coastal)-log(mu inland)|")+
+  xlab(expression(paste("| ",log(mu["coastal"] / mu["inland"])," |")))+
+  ylab("Cline gradient")
+
+
+
+gg1gr<-ggarrange(p3gr,p4gr,common.legend=T,nrow=1,ncol=2,legend="right",labels=LETTERS)
+gg1gr
+ggsave("C:/Users/Steph/GitHub/thrush_hybrids/genomicFeatures/FigS3.png",
+       plot=gg1gr,width=6.5,height=2.5,bg="white")
+
+
+gg2gr<-ggarrange(p5gr,p2gr,common.legend=T,nrow=1,ncol=2,legend="right",labels=LETTERS)
+gg2gr
+
+ggsave("C:/Users/Steph/GitHub/thrush_hybrids/genomicFeatures/FigS7.png",
+       plot=gg2gr,width=6.5,height=2.5,bg="white")
+
+```
+
+Make supp mat fig for ancestry transitions
+
+```{r,fig.width=6.5,fig.height=2.5}
+
+#remove outliers, windows with too few AIMs, and order populations
+tracts<-tracts%>%filter(aimsCount>50)%>%
+  mutate(population=factor(population,levels=c("Alaska","Pemberton","Hope","Washington")))
+
+tracts<-tracts%>%left_join(rho%>%dplyr::select(ChromPos100kb,logRatioMu))
+
+p1tr<-ggplot(tracts,
+       aes(x=log(mean_cMMb),y=startsPerBird,colour=population,fill=population))+
+  geom_point(size=0.3)+
+  geom_smooth(method="lm")+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  xlab("Recombination (log scale)")+
+  ylab("Ancestry transitions")+
+  scale_y_reverse()
+
+p2tr<-ggplot(tracts,
+       aes(x=Fst,y=startsPerBird,colour=population,fill=population))+
+  geom_point(size=0.3)+
+  geom_smooth(method="lm")+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  xlab(expression(F["ST"]))+
+  ylab("Ancestry transitions")
+
+
+p3tr<-ggplot(tracts,
+       aes(x=gene_density_100kb,y=startsPerBird,colour=population,fill=population))+
+  geom_point(size=0.3)+
+  geom_smooth(method="lm")+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  xlab("Genes/100kb")+
+  ylab("Ancestry transitions")
+
+
+p5tr<-ggplot(tracts,
+       aes(x=abs(logRatioMu),y=startsPerBird,colour=population,fill=population))+
+  geom_point(size=0.3)+
+  geom_smooth(method="lm")+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  #xlab("|log(mu coastal)-log(mu inland)|")+
+  xlab(expression(paste("| ",log(mu["coastal"] / mu["inland"])," |")))+
+  ylab("Ancestry transitions")
+
+gg1tr<-ggarrange(p3tr,common.legend=T,nrow=1,ncol=1,legend="right")
+gg1tr
+
+ggsave("C:/Users/Steph/GitHub/thrush_hybrids/genomicFeatures/FigS4.png",
+       plot=gg1tr,width=4,height=2.5,bg="white")
+
+
+gg2tr<-ggarrange(p5tr,p2tr,common.legend=T,nrow=1,ncol=2,legend="right",labels=LETTERS)
+gg2tr
+
+ggsave("C:/Users/Steph/GitHub/thrush_hybrids/genomicFeatures/FigS8.png",
+       plot=gg2tr,width=6.5,height=2.5,bg="white")
+
+```
+
+
+Make supp mat fig for cline centres
+
+```{r,fig.width=6.5,fig.height=2.5}
+
+centres<-centres%>%
+  mutate(population=factor(population,levels=c("Alaska","Pemberton","Hope","Washington")))
+
+centres<-centres%>%left_join(rho%>%dplyr::select(ChromPos100kb,logRatioMu))
+
+p1ce<-ggplot(centres,
+       aes(x=log(mean_cMMb),y=abs(median-0.5),colour=population,fill=population))+
+  geom_point(size=0.3)+
+  geom_smooth(method="lm")+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  xlab("Recombination (log scale)")+
+  ylab("Cline asymmetry")
+
+p2ce<-ggplot(centres,
+       aes(x=Fst,y=abs(median-0.5),colour=population,fill=population))+
+  geom_point(size=0.3)+
+  geom_smooth(method="lm")+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  xlab(expression(F["ST"]))+
+  ylab("Cline asymmetry")
+
+
+p3ce<-ggplot(centres,
+       aes(x=gene_density_100kb,y=abs(median-0.5),colour=population,fill=population))+
+  geom_point(size=0.3)+
+  geom_smooth(method="lm")+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  xlab("Genes/100kb")+
+  ylab("Cline asymmetry")
+
+p4ce<-ggplot(centres%>%filter(!is.na(chromosomeType)),
+       aes(x=chromosomeType,y=abs(median-0.5),colour=population,fill=population))+
+  #geom_point(size=0.3,position=position_jitterdodge(jitter.width=0.1))+
+  geom_boxplot(fill=NA)+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  xlab("Chromosome Type")+
+  ylab("Cline asymmetry")
+
+p5ce<-ggplot(centres,
+       aes(x=logRatioMu,y=median,colour=population,fill=population))+
+  geom_point(size=0.3)+
+  geom_smooth(method="lm")+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  xlab(expression(log(mu["coastal"] / mu["inland"])))+
+  ylab("Cline centre")
+
+
+
+gg1ce<-ggarrange(p3ce,p4ce,common.legend=T,nrow=1,ncol=2,legend="right",labels=LETTERS)
+gg1ce
+
+ggsave("C:/Users/Steph/GitHub/thrush_hybrids/genomicFeatures/FigS5.png",
+       plot=gg1ce,width=6.5,height=2.5,bg="white")
+
+
+gg2ce<-ggarrange(p5ce,p2ce,common.legend=T,nrow=1,ncol=2,legend="right",labels=LETTERS)
+gg2ce
+
+ggsave("C:/Users/Steph/GitHub/thrush_hybrids/genomicFeatures/FigS9.png",
+       plot=gg2ce,width=6.5,height=2.5,bg="white")
+
+
+```
+
+
+Make supp mat fig for fd
+
+```{r,fig.width=6.5,fig.height=2.5}
+
+fd<-fd%>%filter(f_dM>0)
+colnames(fd)
+#fd<-fd%>%left_join(rho%>%dplyr::select(scaffold,startpos,logRatioMu))
+
+p1fd<-ggplot(fd,
+       aes(x=log(mean_cMMb),y=f_d))+
+  geom_point(size=0.3)+
+  geom_smooth(method="lm",colour="grey50")+
+  xlab("Recombination (log scale)")+
+  ylab(expression(f["d"]))
+
+p2fd<-ggplot(fd,
+       aes(x=Fst,y=f_d))+
+  geom_point(size=0.3)+
+  geom_smooth(method="lm",colour=hybCol)+
+  xlab(expression(F["ST"]))+ylim(0,0.82)+
+  ylab(expression(f["d"]))
+
+
+p3fd<-ggplot(fd,
+       aes(x=gene_density_100kb,y=f_d))+
+  geom_point(size=0.3)+
+  geom_smooth(method="lm",colour=hybCol)+
+  xlab("Genes/100kb")+
+  ylab(expression(f["d"]))
+
+p4fd<-ggplot(fd%>%filter(!is.na(chromosomeType)),
+       aes(x=chromosomeType,y=f_d))+
+  #geom_point(size=0.3,position=position_jitterdodge(jitter.width=0.1))+
+  geom_boxplot(fill=NA,colour=hybCol)+
+  xlab("Chromosome Type")+
+  ylab(expression(f["d"]))
+
+p5fd<-ggplot(fd,
+       aes(x=abs(logRatioMu),y=f_d))+
+  geom_point(size=0.3)+
+  geom_smooth(method="lm",colour=hybCol)+
+  xlab(expression(paste("| ",log(mu["coastal"] / mu["inland"])," |")))+
+  ylab(expression(f["d"]))
+
+
+gg1fd<-ggarrange(p3fd,p4fd,common.legend=T,nrow=1,ncol=2,legend="right",labels=LETTERS)
+gg1fd
+
+ggsave("C:/Users/Steph/GitHub/thrush_hybrids/genomicFeatures/FigS6.png",
+       plot=gg1fd,width=6.5,height=2.5,bg="white")
+
+gg2fd<-ggarrange(p5fd,p2fd,common.legend=T,nrow=1,ncol=2,legend="right",labels=LETTERS)
+gg2fd
+
+ggsave("C:/Users/Steph/GitHub/thrush_hybrids/genomicFeatures/FigS10.png",
+       plot=gg2fd,width=6.5,height=2.5,bg="white")
+
+```
+
+
+```{r}
+rho<-rho%>%mutate(chromNum=gsub("chromosome_","",chromosome))
+rho_plot<-rho%>%dplyr::select(chromosome,chromNum,gene_density_100kb,scaffoldLength,mean_cMMb)%>%
+  pivot_longer(cols=c(gene_density_100kb,mean_cMMb),names_to="genome_feature")%>%
+  filter(!is.na(chromNum))%>%
+  mutate(chromNum=factor(str_replace(chromNum,"^0+",""),levels=c(as.character(1:40),"Z")))
+
+
+
+rho1<-ggplot(rho_plot%>%dplyr::group_by(chromosome,chromNum,scaffoldLength,genome_feature)%>%
+  dplyr::summarise(medianVal=median(value))%>%filter(scaffoldLength>10000000),
+  aes(x=chromNum,y=medianVal,fill=genome_feature,group=genome_feature))+
+  geom_bar(stat="identity",position="dodge")+
+  scale_fill_manual(values=c(hybCol,"#202D26"),name="",labels=c("genes/\n100kb","cM/Mb"))+
+  ylab("Median")+xlab("chromosome")
+
+
+```
+
+
+```{r, fig.width=7,fig.height=6}
+
+gg2<-ggarrange(p1gr,p1tr,p1ce,p1fd,common.legend=T,legend="right")
+
+gg3<-ggarrange(rho1,gg2,heights=c(1,2),nrow=2,ncol=1,labels=LETTERS)
+
+gg3
+
+ggsave(filename="C:/Users/Steph/GitHub/thrush_hybrids/genomicFeatures/Fig5.png",
+       width=7,height=6,units="in",bg="white")
+```
+```{r}
+
+ggplot(gradients,
+       aes(x=logRatioMu,y=median,colour=population,fill=population))+
+  geom_point(size=0.3)+
+  geom_smooth()+
+  scale_colour_manual(values=pop.cols)+
+  scale_fill_manual(values=pop.cols)+
+  xlab(expression(log(mu["coastal"] / mu["inland"])))+
+  ylab("Cline centre")
+
+```
+

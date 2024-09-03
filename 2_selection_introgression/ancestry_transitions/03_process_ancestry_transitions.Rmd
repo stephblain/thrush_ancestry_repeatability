@@ -2,7 +2,9 @@
 title: "Ancestry Transitions - Adult Hybrids"
 author: "steph"
 date: "2024-06-05"
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
