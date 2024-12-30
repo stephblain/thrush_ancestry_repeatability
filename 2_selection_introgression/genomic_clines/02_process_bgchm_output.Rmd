@@ -190,6 +190,16 @@ pClines<-gradientPlot/centrePlot/chromPlot+plot_layout(heights = c(12,12,1))
 pClines
 
 ```
+
+```{r}
+
+clines%>%filter(param=="centre")%>%group_by(population)%>%
+  summarise(mean(median))
+
+clines%>%filter(param=="gradient")%>%group_by(population)%>%
+  summarise(mean(median))
+
+```
 ```{r}
 nLoci<-nrow(clines)/8
 
@@ -252,9 +262,112 @@ outOverlap<-outOverlap%>%
 
 outOverlap
 
-# write.csv(outOverlap,
-#           file="C:/Users/Steph/GitHub/thrush_hybrids/genomic_clines/outlier_overlap.csv",
-#           row.names=F)
+
+
+```
+
+* get p-values for overlap
+* function from dgconstraint: https://github.com/samyeaman/dgconstraint/blob/master/R/allwise_p_chisq.R
+
+```{r}
+
+allwise_p_chisq <- function (input,num_permute = 10000,na.rm = F){
+  
+  results_chisq <- array (NA,num_permute)
+  
+  obs1 <- rowSums (input,na.rm = na.rm)
+  exp1 <- array (mean(obs1), length(obs1))
+  chisq1 <- (obs1 - exp1)^2 / exp1
+  
+  for (loop1 in 1:num_permute){
+    
+    input_sub <- input
+    
+    for (loop2 in 1:ncol(input_sub)){
+      input_sub[,loop2] <- sample (input_sub[,loop2],nrow (input_sub),replace = F)
+    }
+    
+    obs2 <- rowSums(input_sub,na.rm = na.rm)
+    exp2 <- array (mean(obs2),length(obs2))
+    chisq2 <- (obs2 - exp2)^2/exp2
+    
+    results_chisq[loop1] <- sum (chisq2)
+    
+  }
+  
+  out1 <- sum (results_chisq > sum(chisq1))
+  
+  if (out1 == 0){
+    warning('Note: estimated p-value is lower than 1/(number of permutations)')
+    1/num_permute
+  } else {
+    out1/num_permute
+  }
+  
+}
+
+```
+
+* make dataframe with loci in rows, populations in columns, where 1=outlier, 0=null
+* loop through pairs, trios, and full set
+
+```{r}
+
+clinesArrayGradient<-clines%>%
+  filter(param=="gradient")%>%
+  dplyr::select(locus,population,outlier)%>%
+  mutate(outlier=(as.numeric(as.factor(outlier))-1))%>%
+  pivot_wider(names_from=population, values_from=outlier)%>%
+  column_to_rownames(var='locus')
+
+outOverlapPval<-data.frame()
+
+for(i in 1:nrow(popCombos)){
+  
+  pop1<-popCombos[i,1]
+  pop2<-popCombos[i,2]
+  
+  pval1=allwise_p_chisq(clinesArrayGradient%>%dplyr::select(all_of(c(pop1,pop2))))
+
+  outOverlapPval<-rbind(outOverlapPval,
+                        data.frame(populations=paste(pop1,pop2,sep=" x "),
+                                   pVal=pval1))
+
+}
+
+for(i in 1:nrow(popCombos3)){
+  pop1<-popCombos3[i,1]
+  pop2<-popCombos3[i,2]
+  pop3<-popCombos3[i,3]
+  
+  pval1=allwise_p_chisq(clinesArrayGradient%>%dplyr::select(all_of(c(pop1,pop2,pop3))))
+
+  outOverlapPval<-rbind(outOverlapPval,
+                        data.frame(populations=paste(pop1,pop2,pop3,sep=" x "),
+                                   pVal=pval1))
+
+}
+
+pop1="Alaska"; pop2="Pemberton"; pop3="Hope"; pop4="Washington"
+pval1=allwise_p_chisq(clinesArrayGradient)
+
+
+outOverlapPval<-rbind(outOverlapPval,
+                      data.frame(populations=paste(pop1,pop2,pop3,pop4,sep=" x "),
+                                 pVal=pval1))
+```
+
+```{r}
+
+outOverlap<-outOverlap%>%left_join(outOverlapPval)
+
+outOverlap
+
+write.csv(outOverlap,
+          file="C:/Users/Steph/GitHub/thrush_hybrids/genomic_clines/outlier_overlap_Nov24.csv",
+          row.names=F)
+
+
 
 ```
 
@@ -287,24 +400,22 @@ print(paste("expected:",round(expected1,2)))
 
 ```{r}
 
-pop1<-unique(clines$population)[1]
-t1<-t.test(clines%>%filter(param=="gradient"&population==pop1)%>%pull(median),
-       mu=1)
-data.frame(population=pop1,tStat=t1$statistic,
-           df=t1$parameter,pVal=t1$p.value)
-t.test(clines%>%filter(param=="centre"&population==pop1)%>%pull(median),
-       mu=0.5)
+clinesArrayCentre<-clines%>%
+  filter(param=="centre")%>%
+  dplyr::select(locus,population,outlier)%>%
+  mutate(outlier=(as.numeric(as.factor(outlier))-1))%>%
+  pivot_wider(names_from=population, values_from=outlier)%>%
+  column_to_rownames(var='locus')
 
-lmm1<-lmer(median~1+(1|population),data=clines%>%filter(param=="gradient"))
-summary(lmm1)
-confint(lmm1)
+pop1="Hope"
+pop2="Pemberton"
+  
+pval1=allwise_p_chisq(clinesArrayGradient%>%dplyr::select(all_of(c(pop1,pop2))))
+pval1
 
-
-lmm2<-lmer(median~1+(1|population),data=clines%>%filter(param=="centre"))
-summary(lmm2)
-confint(lmm2)
 ```
-#get a list of outlier regions in 1 or more populations
+
+* get a list of outlier regions in 1 or more populations
 
 ```{r}
 
@@ -351,14 +462,6 @@ clinesSummary<-clinesSummary%>%
   mutate(misexpress=if_else(ChromPos%in%misexpressGenes$ChromPos,"misexpressed","not misexpressed"))%>%
   mutate(gwas=if_else(ChromPos%in%gwasSNPs$ChromPos,"aphenotype-\nassociated","bnot phenotype-\nassociated"))
 
-library(lme4)
-library(lmerTest)
-library(car)
-lm1<-lmer(median~misexpress+(1|population),clines%>%filter(param=="gradient"))
-Anova(lm1)
-
-lm2<-lmer(median~gwas+(1|population),clines%>%filter(param=="gradient"))
-Anova(lm2)
 ```
 
 
@@ -406,6 +509,41 @@ misexpressOverlap<-clinesSummary%>%filter(param=="gradient"&ld_status=="misexpre
 
 misexpressGenes%>%filter(ChromPos%in%misexpressOverlap)%>%pull(gene)
 figS2
+
+```
+
+* get p-values
+
+```{r}
+
+clinesArrayGradientMisexpress<-clinesSummary%>%
+  filter(param=="gradient"&ld_dataset=="misexpress")%>%
+  mutate(cline_outlier=if_else(countOutlier>1,1,0))%>%
+  mutate(misexpress_outlier=if_else(ld_status=="misexpressed",1,0))%>%
+  dplyr::select(ChromPos,cline_outlier,misexpress_outlier)%>%
+  column_to_rownames(var='ChromPos')
+
+allwise_p_chisq(clinesArrayGradientMisexpress)
+sum(clinesArrayGradientMisexpress$cline_outlier)
+sum(clinesArrayGradientMisexpress$misexpress_outlier)
+sum(clinesArrayGradientMisexpress$cline_outlier==1&
+  clinesArrayGradientMisexpress$misexpress_outlier==1)
+
+clinesArrayGradientGWAS<-clinesSummary%>%
+  filter(param=="gradient"&ld_dataset=="gwas")%>%
+  mutate(cline_outlier=if_else(countOutlier>1,1,0))%>%
+  mutate(gwas_outlier=if_else(ld_status=="aphenotype-\nassociated",1,0))%>%
+  dplyr::select(ChromPos,cline_outlier,gwas_outlier)%>%
+  column_to_rownames(var='ChromPos')
+allwise_p_chisq(clinesArrayGradientGWAS)
+sum(clinesArrayGradientGWAS$cline_outlier)
+
+
+any(duplicated(misexpressGenes$ChromPos))
+any(duplicated(gwasSNPs$ChromPos))
+
+
+
 
 ```
 
@@ -530,6 +668,11 @@ ggsave("C:/Users/Steph/GitHub/thrush_hybrids/genomic_clines/presentation_introgr
 
 p1<-ggpubr::ggarrange(pClines,p_gradients,widths=c(2.5,1),labels=c("A","B"))
 p1
+
+
+ggsave("C:/Users/Steph/GitHub_data/bgchm_clines/Fig2-revise1.svg",
+      plot=p1,width=10,height=6,units="in",bg="white")
+
 # ggsave("C:/Users/Steph/GitHub_data/bgchm_clines/Fig2.png",
 #        plot=p1,width=10,height=6,units="in",bg="white")
 
@@ -780,6 +923,10 @@ lmm5<-lmer(median~abs(logRatioMu)+(1|population),data=clines%>%filter(param=="gr
 summary(lmm5)
 confint(lmm5)
 
+lmm6<-lmer(median~scaffoldLength_Mb+(1|population),data=clines%>%filter(param=="gradient"))
+summary(lmm6)
+confint(lmm6)
+
 
 ```
 
@@ -860,6 +1007,11 @@ lmm5<-lmer(median~logRatioMu+(1|population),data=clines%>%filter(param=="centre"
 summary(lmm5)
 confint(lmm5)
 Anova(lmm5)
+
+lmm6<-lmer(abs(median-0.5)~scaffoldLength_Mb+(1|population),data=clines%>%filter(param=="centre"))
+summary(lmm6)
+confint(lmm6)
+Anova(lmm6)
 
 ```
 

@@ -306,6 +306,10 @@ lm5<-lm(f_d~abs(logRatioMu),dstatsQc%>%filter(f_dM>0))
 summary(lm5)
 confint(lm5)
 
+lm6<-lm(f_d~scaffoldLength_Mb,dstatsQc%>%filter(f_dM>0))
+summary(lm6)
+confint(lm6)
+
 ```
 
 

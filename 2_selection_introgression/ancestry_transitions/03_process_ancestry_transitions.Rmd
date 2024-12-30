@@ -191,7 +191,7 @@ for(pop1 in levels(tractSummary100kb$population)){
 
 }
 
-write.csv(nlsOut,"C:/Users/Steph/GitHub_data/ancestry_tracts/ancestryTransitions.nlsCI.20240605.csv",row.names=F)
+#write.csv(nlsOut,"C:/Users/Steph/GitHub_data/ancestry_tracts/ancestryTransitions.nlsCI.20240605.csv",row.names=F)
 
 ```
 
@@ -242,6 +242,19 @@ ggsave("C:/Users/Steph/GitHub/thrush_hybrids/ancestry_tracts/figures/model_fit.p
 ```{r}
 
 tractSummary100kb%>%filter(outlierLwr==1)%>%pull(ChromPos100kb)%>%unique()%>%length()
+tractLoci4pops<-tractSummary100kb%>%group_by(ChromPos100kb)%>%
+  summarise(count=n())%>%filter(count==4)
+tractSummary100kb<-tractSummary100kb%>%filter(ChromPos100kb%in%tractLoci4pops$ChromPos100kb)
+
+tractSummary100kb%>%group_by(ChromPos100kb)%>%
+  summarise(n_out=sum(outlierLwr))%>%
+  filter(n_out>0)%>%
+  nrow()
+```
+
+
+```{r}
+
 nLoci=tractSummary100kb%>%pull(ChromPos100kb)%>%unique()%>%length()
 popCombos<-t(combn(sort(unique(tractSummary100kb$population)),2))
 outOverlap<-data.frame()
@@ -305,11 +318,116 @@ outOverlap<-outOverlap%>%
 outOverlap
 
 
-# write.csv(outOverlap,
-#           file="C:/Users/Steph/GitHub/thrush_hybrids/ancestry_tracts/outlier_overlap.csv",
-#           row.names=F)
+write.csv(outOverlap,
+          file="C:/Users/Steph/GitHub/thrush_hybrids/ancestry_tracts/outlier_overlap_20241205.csv",
+          row.names=F)
 
 ```
+
+```{r}
+
+allwise_p_chisq <- function (input,num_permute = 10000,na.rm = F){
+  
+  results_chisq <- array (NA,num_permute)
+  
+  obs1 <- rowSums (input,na.rm = na.rm)
+  exp1 <- array (mean(obs1), length(obs1))
+  chisq1 <- (obs1 - exp1)^2 / exp1
+  
+  for (loop1 in 1:num_permute){
+    
+    input_sub <- input
+    
+    for (loop2 in 1:ncol(input_sub)){
+      input_sub[,loop2] <- sample (input_sub[,loop2],nrow (input_sub),replace = F)
+    }
+    
+    obs2 <- rowSums(input_sub,na.rm = na.rm)
+    exp2 <- array (mean(obs2),length(obs2))
+    chisq2 <- (obs2 - exp2)^2/exp2
+    
+    results_chisq[loop1] <- sum (chisq2)
+    
+  }
+  
+  out1 <- sum (results_chisq > sum(chisq1))
+  
+  if (out1 == 0){
+    warning('Note: estimated p-value is lower than 1/(number of permutations)')
+    1/num_permute
+  } else {
+    out1/num_permute
+  }
+  
+}
+
+```
+
+* make dataframe with loci in rows, populations in columns, where 1=outlier, 0=null
+* loop through pairs, trios, and full set
+
+
+```{r}
+
+tractArray<-tractSummary100kb%>%
+  dplyr::select(ChromPos100kb,population,outlierLwr)%>%
+  pivot_wider(names_from=population, values_from=outlierLwr)%>%
+  column_to_rownames(var='ChromPos100kb')
+
+tractArray[is.na(tractArray)]
+
+head(tractArray)
+
+```
+
+
+```{r}
+
+outOverlapPval<-data.frame()
+
+for(i in 1:nrow(popCombos)){
+  
+  pop1<-popCombos[i,1]
+  pop2<-popCombos[i,2]
+  
+  pval1=allwise_p_chisq(tractArray%>%dplyr::select(all_of(c(pop1,pop2))))
+
+  outOverlapPval<-rbind(outOverlapPval,
+                        data.frame(populations=paste(pop1,pop2,sep=" x "),
+                                   pVal=pval1))
+
+}
+
+for(i in 1:nrow(popCombos3)){
+  pop1<-popCombos3[i,1]
+  pop2<-popCombos3[i,2]
+  pop3<-popCombos3[i,3]
+  
+  pval1=allwise_p_chisq(tractArray%>%dplyr::select(all_of(c(pop1,pop2,pop3))))
+
+  outOverlapPval<-rbind(outOverlapPval,
+                        data.frame(populations=paste(pop1,pop2,pop3,sep=" x "),
+                                   pVal=pval1))
+
+}
+
+pop1="Alaska"; pop2="Pemberton"; pop3="Hope"; pop4="Washington"
+pval1=allwise_p_chisq(tractArray)
+
+
+outOverlapPval<-rbind(outOverlapPval,
+                      data.frame(populations=paste(pop1,pop2,pop3,pop4,sep=" x "),
+                                 pVal=pval1))
+
+outOverlap<-outOverlap%>%left_join(outOverlapPval)
+outOverlap
+
+#write.csv(outOverlap,
+#        file="C:/Users/Steph/GitHub/thrush_hybrids/ancestry_tracts/outlier_overlap_Dec05.csv",
+#          row.names=F)
+
+```
+
 
 ```{r}
 
@@ -360,6 +478,9 @@ gwasSNPs1<-read.csv("C:/Users/Steph/GitHub_data/ancestry_tracts/metaUSAT_SNPs_st
 gwasSNPs2<-read.csv("C:/Users/Steph/GitHub_data/ancestry_tracts/all_traits_SNPs_plog6.csv")
 gwasSNPs<-rbind(gwasSNPs1,gwasSNPs2); rm(gwasSNPs1,gwasSNPs2)
 
+tractLoci4pops<-tractSummary100kb%>%group_by(ChromPos100kb)%>%
+  summarise(count=n())%>%filter(count==4)
+
 gwasSNPs<-gwasSNPs%>%
   mutate(scaffold=gsub("_","-",chr))%>%
   left_join(scaf_order)%>%
@@ -367,20 +488,39 @@ gwasSNPs<-gwasSNPs%>%
   mutate(ChromPos=paste(chromosome,sprintf("%010d",pos),sep="_"))%>%
   mutate(ChromPos100kb=paste(chromosome,sprintf("%010d",plyr::round_any(pos,100000)),sep="_"))%>%
   dplyr::select(chromosome,ChromPos,ChromPos100kb,phenotype)%>%
-  filter(!is.na(chromosome))
+  filter(!is.na(chromosome))%>%
+  filter(ChromPos100kb%in%tractLoci4pops$ChromPos100kb)
 
 gwasTransitionsOutliers<-gwasSNPs%>%filter(ChromPos100kb%in%transitionOutliers$ChromPos100kb)
 gwasTransitionsOutliers%>%mutate(Chrom=substr(ChromPos100kb,1,13))%>%
   group_by(Chrom,phenotype)%>%
   summarise(count=n())%>%
   arrange(phenotype)
-nrow(gwasTransitionsOutliers)
 
-tractLoci4pops<-tractSummary100kb%>%group_by(ChromPos100kb)%>%
-  summarise(count=n())%>%filter(count==4)
+length(unique(gwasTransitionsOutliers$ChromPos100kb))
+#nrow(gwasTransitionsOutliers)
 
-nrow(gwasSNPs%>%filter(ChromPos100kb%in%tractLoci4pops$ChromPos100kb))*
+n_gwas_windows<-length(gwasSNPs%>%filter(ChromPos100kb%in%tractLoci4pops$ChromPos100kb)%>%
+                       pull(ChromPos100kb)%>%unique())
+nrow(transitionOutliers)
+
+n_gwas_windows*
   nrow(transitionOutliers)/nrow(tractLoci4pops)
+
+tractArrayGwas<-tractLoci4pops%>%
+  dplyr::select(-count)%>%
+  left_join(transitionOutliers%>%
+              mutate(transitionOutlier=1)%>%
+              dplyr::select(ChromPos100kb,transitionOutlier)%>%
+              distinct())%>%
+  left_join(gwasSNPs%>%
+              mutate(gwasLinked=1)%>%
+              dplyr::select(ChromPos100kb,gwasLinked)%>%
+              distinct())%>%
+  column_to_rownames(var='ChromPos100kb')
+tractArrayGwas[is.na(tractArrayGwas)]<-0
+
+allwise_p_chisq(tractArrayGwas)
 
 ```
 
@@ -419,10 +559,14 @@ misexpressTransitionOutliers<-misexpress%>%
   filter(ChromPos100kbStr%in%transitionOutliers$ChromPos100kb|
            ChromPos100kbEnd%in%transitionOutliers$ChromPos100kb)
 
+
+
 #unique genes
 misexpressTransitionOutliers%>%dplyr::select(chromosome,Gene)%>%distinct()
+#unique windows
 misexpressTransitionOutliers%>%dplyr::select(ChromPos100kbStr)%>%distinct()
 
+#outliers per chromosome
 misexpressTransitionOutliers%>%
   group_by(chromosome)%>%summarise(n())
 
@@ -431,7 +575,30 @@ misexpress%>%filter(ChromPos100kbStr%in%tractLoci4pops$ChromPos100kb)%>%
   nrow(transitionOutliers)/nrow(tractLoci4pops)
 
 
+#make an array with 1/0 for misexpress location and 4-way outlier location
+tractArrayMisexpress<-tractLoci4pops%>%
+  dplyr::select(-count)%>%
+  left_join(transitionOutliers%>%
+              mutate(transitionOutlier=1)%>%
+              dplyr::select(ChromPos100kb,transitionOutlier)%>%
+              distinct())%>%
+  left_join(misexpressTransitionOutliers%>%
+  dplyr::select(ChromPos100kbStr)%>%
+  distinct()%>%
+  mutate(misexpressLinked=1)%>%
+  rename(ChromPos100kb=ChromPos100kbStr))%>%
+  column_to_rownames(var='ChromPos100kb')
+tractArrayMisexpress[is.na(tractArrayMisexpress)]<-0
+
+allwise_p_chisq(tractArrayMisexpress)
+
+#get the fold difference between observed & expected
+108/90
 ```
+
+
+
+
 ```{r,fig.width=8,fig.height=3}
 
 tractOutlierGenesSummary<-
@@ -573,7 +740,5 @@ lmm4<-lmer(startsPerBird~abs(logRatioMu)+(1|population),data=tractSummary100kb%>
 summary(lmm4)
 confint(lmm4)
 Anova(lmm4)
-
-
 
 ```
